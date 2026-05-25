@@ -14,8 +14,10 @@
 # FastAPI: the web framework for building APIs
 # uvicorn: the ASGI server that runs FastAPI (like gunicorn for Flask)
 # [standard] includes extras: websockets, httptools for better performance
+# python-multipart: required for multipart/form-data file uploads
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
+python-multipart==0.0.20
 
 # ── Settings & Environment Variables ─────────────────────────────
 # pydantic-settings: reads .env files into typed Python settings classes

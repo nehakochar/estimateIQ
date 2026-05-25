@@ -1,11 +1,5 @@
-# This file makes the 'models' directory a Python package.
-#
-# What goes here?
-# SQLAlchemy ORM models — Python classes that map to database tables.
-#
-# Example (future):
-#   from app.models.rfp import RFP
-#   from app.models.user import User
-#
-# As you add model files (e.g. rfp.py, user.py), import them here
-# so SQLAlchemy can discover them when creating tables.
+# SQLAlchemy ORM models — imported here so SQLAlchemy can discover them
+# when Base.metadata.create_all() is called.
+
+from app.models.project import Project  # noqa: F401
+from app.models.document import Document  # noqa: F401
