@@ -1,17 +1,38 @@
-# API framework
-fastapi
-uvicorn[standard]
+# ─────────────────────────────────────────────────────────────────
+# requirements.txt — Python Dependencies
+# ─────────────────────────────────────────────────────────────────
+# All versions are pinned (==) to ensure reproducible builds.
+# "Pinned" means every developer and every Docker build gets the
+# exact same versions — no surprise breakages from updates.
+#
+# To upgrade a package:
+#   1. Change the version number here
+#   2. Rebuild the Docker image: docker-compose build backend
+# ─────────────────────────────────────────────────────────────────
 
-# Settings & environment
-pydantic-settings
+# ── API Framework ────────────────────────────────────────────────
+# FastAPI: the web framework for building APIs
+# uvicorn: the ASGI server that runs FastAPI (like gunicorn for Flask)
+# [standard] includes extras: websockets, httptools for better performance
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
 
-# Database
-sqlalchemy
-psycopg2-binary
+# ── Settings & Environment Variables ─────────────────────────────
+# pydantic-settings: reads .env files into typed Python settings classes
+pydantic-settings==2.9.1
 
-# Vector database
-qdrant-client
+# ── Database ─────────────────────────────────────────────────────
+# sqlalchemy: the ORM — maps Python classes to database tables
+# psycopg2-binary: the PostgreSQL driver (binary = no C compiler needed)
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.10
 
-# Task queue & broker
+# ── Vector Database ───────────────────────────────────────────────
+# qdrant-client: official Python client for Qdrant vector database
+qdrant-client==1.14.2
+
+# ── Task Queue & Message Broker ───────────────────────────────────
+# celery: distributed task queue (runs background jobs asynchronously)
+# redis: Python client for Redis (used as Celery's broker and result backend)
 celery[redis]==5.4.0
 redis==5.2.1
