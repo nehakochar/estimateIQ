@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # 1. Relational Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: estimateiq_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - estimateiq_network
+
+  # 2. Redis (Message Broker + Result Backend for Celery)
+  redis:
+    image: redis:7-alpine
+    container_name: estimateiq_redis
+    restart: always
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - estimateiq_network
+
+  # 3. Vector Database for AI/Embeddings
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: estimateiq_qdrant
+    restart: always
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    ports:
+      - "${QDRANT_PORT_HTTP}:6333"
+      - "${QDRANT_PORT_GRPC}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - estimateiq_network
+
+  # 4. Application Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: estimateiq_backend
+    restart: always
+    ports:
+      - "${BACKEND_PORT}:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - qdrant
+      - redis
+    networks:
+      - estimateiq_network
+
+  # 5. Celery Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: estimateiq_celery_worker
+    restart: always
+    command: celery -A app.core.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - estimateiq_network
+
+  # 6. Application Frontend
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: estimateiq_frontend
+  #   restart: always
+  #   ports:
+  #     - "${FRONTEND_PORT}:3000"
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - estimateiq_network
+
+# Persistent volumes prevent data from wiping out when containers stop
+volumes:
+  postgres_data:
+  qdrant_storage:
+  redis_data:
+
+networks:
+  estimateiq_network:
+    driver: bridge

@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+pydantic-settings
+
+sqlalchemy
+psycopg2-binary
+
+qdrant-client
+
+# Task queue
+celery[redis]==5.4.0
+redis==5.2.1
