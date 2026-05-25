@@ -18,11 +18,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-# Import the routers from their respective route files.
-# As you add more features (rfp, users, estimates), you'll import their routers here.
 from app.api.routes.health import router as health_router
 from app.api.routes.upload import router as upload_router
+from app.api.routes.jobs import router as jobs_router          # Phase 3
+from app.api.routes.documents import router as documents_router  # Phase 3
 from app.core.database import Base, engine
+
 
 # ─────────────────────────────────────────────
 # LIFESPAN — STARTUP / SHUTDOWN EVENTS
@@ -33,14 +34,13 @@ async def lifespan(app: FastAPI):
     Runs once on startup (before the first request) and once on shutdown.
 
     Startup:
-      - Import all SQLAlchemy models so they are registered with Base.metadata
-        before create_all is called.  The models/__init__.py re-exports both
-        Project and Document, so a single import is enough.
+      - Import all SQLAlchemy models so they register with Base.metadata.
       - Call Base.metadata.create_all to create any missing tables.
         This is idempotent — existing tables are left untouched.
     """
-    # Ensure models are registered with Base.metadata before create_all.
-    import app.models  # noqa: F401 — side-effect import registers Project & Document
+    # Side-effect import: registers Project, Document, ProcessingJob
+    # with Base.metadata so create_all knows about all three tables.
+    import app.models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     yield
@@ -56,25 +56,18 @@ app = FastAPI(
         "AI-powered Enterprise RFP Intelligence Platform. "
         "Automates RFP parsing, analysis, and estimation."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
-    # Swagger UI will be available at http://localhost:8000/docs
-    # ReDoc will be available at http://localhost:8000/redoc
 )
 
 
 # ─────────────────────────────────────────────
 # REGISTER ROUTERS
 # ─────────────────────────────────────────────
-# include_router() mounts all routes from a router onto the main app.
-# Adding a new feature = create a new router file + one line here.
-
 app.include_router(health_router)
 app.include_router(upload_router)
-# Future routers will be added here, for example:
-# app.include_router(rfp_router)
-# app.include_router(user_router)
-# app.include_router(estimate_router)
+app.include_router(jobs_router)       # GET /jobs/{job_id}
+app.include_router(documents_router)  # GET /documents/{document_id}
 
 
 # ─────────────────────────────────────────────
@@ -82,13 +75,10 @@ app.include_router(upload_router)
 # ─────────────────────────────────────────────
 @app.get("/", tags=["Root"], summary="API Root")
 def root():
-    """
-    Root endpoint — confirms the API is reachable.
-    Returns basic info about the service.
-    """
+    """Root endpoint — confirms the API is reachable."""
     return {
         "service": "EstimateIQ API",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "docs": "/docs",
         "health": "/health",
     }

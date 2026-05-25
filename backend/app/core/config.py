@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     upload_max_xlsx_mb: float = 15.0
     upload_storage_root: str = "storage/uploads"
 
+    # Chunking
+    chunking_parent_chunk_size: int = 2048
+    chunking_child_chunk_size: int = 1024
+    chunking_chunk_overlap: int = 128
+    chunking_debug_output_root: str = "storage/debug/hierarchical"
+
     @field_validator(
         "upload_max_files",
         "upload_max_total_mb",
