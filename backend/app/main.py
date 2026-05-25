@@ -1,14 +1,16 @@
-import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 from app.core.config import settings
+from app.core.database import get_db
 
-app = FastAPI(title="EstimateIQ Health Check")
+app = FastAPI(title="EstimateIQ")
 
 
 @app.get("/test-connections")
-def test_database_connections():
+def test_connections(db: Session = Depends(get_db)):
     results = {
         "postgres_status": "Failed",
         "qdrant_status": "Failed",
@@ -17,21 +19,9 @@ def test_database_connections():
 
     # 1. TEST POSTGRESQL CONNECTION
     try:
-        conn = psycopg2.connect(
-            host="postgres",
-            database=settings.postgres_db,
-            user=settings.postgres_user,
-            password=settings.postgres_password,
-            port=5432  # internal Docker network port
-        )
-        cursor = conn.cursor()
-        cursor.execute("SELECT version();")
-        db_version = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
+        version = db.execute(text("SELECT version();")).scalar()
         results["postgres_status"] = "Success"
-        results["details"]["postgres_version"] = db_version[0]
+        results["details"]["postgres_version"] = version
     except Exception as e:
         results["details"]["postgres_error"] = str(e)
 
@@ -43,16 +33,14 @@ def test_database_connections():
             api_key=settings.qdrant_api_key,
             https=False
         )
-        collections_response = client.get_collections()
-
+        collections = client.get_collections()
         results["qdrant_status"] = "Success"
-        results["details"]["qdrant_collections_count"] = len(collections_response.collections)
+        results["details"]["qdrant_collections_count"] = len(collections.collections)
     except UnexpectedResponse as ur:
-        results["details"]["qdrant_error"] = f"Authentication/API Error: {ur.status_code} - {ur.reason_phrase}"
+        results["details"]["qdrant_error"] = f"Auth error: {ur.status_code} - {ur.reason_phrase}"
     except Exception as e:
         results["details"]["qdrant_error"] = str(e)
 
-    # If either service fails, return a 500 error to indicate an unhealthy stack
     if results["postgres_status"] == "Failed" or results["qdrant_status"] == "Failed":
         raise HTTPException(status_code=500, detail=results)
 

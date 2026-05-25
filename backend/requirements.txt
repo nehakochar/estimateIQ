@@ -1,13 +1,17 @@
+# API framework
 fastapi
-uvicorn
-python-dotenv
+uvicorn[standard]
+
+# Settings & environment
 pydantic-settings
 
+# Database
 sqlalchemy
 psycopg2-binary
 
+# Vector database
 qdrant-client
 
-# Task queue
+# Task queue & broker
 celery[redis]==5.4.0
 redis==5.2.1
