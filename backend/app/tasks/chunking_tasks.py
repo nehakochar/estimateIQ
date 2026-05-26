@@ -26,6 +26,7 @@ import logging
 from app.core.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.services.chunking.service import ChunkingService
+from app.tasks.semantic_chunking_tasks import semantic_chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ def chunk_document(document_id: str, project_id: str) -> dict:
         service = ChunkingService(db=db)
         service.run(document_id=document_id, project_id=project_id)
         logger.info("chunk_document task completed: document=%s", document_id)
+        semantic_chunk_document.delay(document_id, project_id)
         return {"document_id": document_id, "status": "chunked"}
 
     except Exception as exc:

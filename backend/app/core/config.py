@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     chunking_child_chunk_size: int = 1024
     chunking_chunk_overlap: int = 128
     chunking_debug_output_root: str = "storage/debug/hierarchical"
+    semantic_debug_output_root: str = "storage/debug/semantic"
+
+    # Semantic Chunking
+    semantic_max_chunk_tokens: int = 600
+    semantic_splitter_buffer_size: int = 1
+    semantic_splitter_breakpoint_percentile: int = 95
+    semantic_sentence_chunk_size: int = 512
+    semantic_sentence_chunk_overlap: int = 64
 
     @field_validator(
         "upload_max_files",
@@ -43,11 +51,22 @@ class Settings(BaseSettings):
         "upload_max_pdf_mb",
         "upload_max_docx_mb",
         "upload_max_xlsx_mb",
+        "semantic_max_chunk_tokens",
+        "semantic_splitter_buffer_size",
+        "semantic_sentence_chunk_size",
+        "semantic_sentence_chunk_overlap",
     )
     @classmethod
     def must_be_positive(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("must be a positive number")
+        return v
+
+    @field_validator("semantic_splitter_breakpoint_percentile")
+    @classmethod
+    def must_be_valid_percentile(cls, v: int) -> int:
+        if v < 1 or v > 99:
+            raise ValueError("must be between 1 and 99")
         return v
 
     class Config:

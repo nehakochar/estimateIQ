@@ -33,6 +33,8 @@ celery_app = Celery(
         "app.tasks.processing_tasks",
         # Phase 5: hierarchical chunking tasks
         "app.tasks.chunking_tasks",
+        # Phase 6: semantic chunking + classification tasks
+        "app.tasks.semantic_chunking_tasks",
     ],
 )
 

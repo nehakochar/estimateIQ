@@ -22,6 +22,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.upload import router as upload_router
 from app.api.routes.jobs import router as jobs_router          # Phase 3
 from app.api.routes.documents import router as documents_router  # Phase 3
+from app.api.routes.semantic_chunks import router as semantic_chunks_router  # Phase 6
 from app.core.database import Base, engine
 
 
@@ -66,8 +67,9 @@ app = FastAPI(
 # ─────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(upload_router)
-app.include_router(jobs_router)       # GET /jobs/{job_id}
-app.include_router(documents_router)  # GET /documents/{document_id}
+app.include_router(jobs_router)              # GET /jobs/{job_id}
+app.include_router(documents_router)         # GET /documents/{document_id}
+app.include_router(semantic_chunks_router)   # GET /documents/{document_id}/semantic-chunks
 
 
 # ─────────────────────────────────────────────
