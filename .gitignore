@@ -5,7 +5,7 @@ __pycache__/
 storage/uploads/
 storage/debug/
 .kiro/
-
+node_modules/
 # Test and development files
 scripts/test_pipeline.py
 sample_rfp.*

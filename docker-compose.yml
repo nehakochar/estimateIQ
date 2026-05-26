@@ -100,19 +100,27 @@ services:
     networks:
       - estimateiq_network
 
-  # 6. Application Frontend
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   container_name: estimateiq_frontend
-  #   restart: always
-  #   ports:
-  #     - "${FRONTEND_PORT}:3000"
-  #   depends_on:
-  #     - backend
-  #   networks:
-  #     - estimateiq_network
+  # 6. Application Frontend (Vite dev server — swap for nginx build in production)
+  frontend:
+    image: node:20-alpine
+    container_name: estimateiq_frontend
+    restart: always
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_APP_NAME=EstimateIQ
+      - VITE_APP_VERSION=1.0.0
+      - VITE_ENVIRONMENT=development
+    depends_on:
+      - backend
+    networks:
+      - estimateiq_network
 
 # Persistent volumes prevent data from wiping out when containers stop
 volumes:
