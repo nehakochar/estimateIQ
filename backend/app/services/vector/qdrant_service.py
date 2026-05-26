@@ -134,3 +134,79 @@ class QdrantService:
         )
 
         return [record.payload for record in records if record.payload is not None]
+
+    def search(
+        self,
+        query_vector: list[float],
+        query_filter: Filter | None = None,
+        limit: int = 10,
+    ) -> list[Any]:
+        """
+        Perform semantic similarity search in Qdrant.
+
+        Args:
+            query_vector: 384-dimensional embedding vector.
+            query_filter: Optional Qdrant Filter for metadata filtering.
+            limit: Maximum number of results to return.
+
+        Returns:
+            List of ScoredPoint objects with score and payload.
+        """
+        results = self._client.search(
+            collection_name=settings.embedding_collection_name,
+            query_vector=query_vector,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return results
+
+    def scroll(
+        self,
+        query_filter: Filter | None = None,
+        limit: int = 100,
+    ) -> list[Any]:
+        """
+        Scroll through collection points matching a filter.
+
+        Useful for retrieving all chunks in a category or document without
+        semantic similarity scoring.
+
+        Args:
+            query_filter: Optional Qdrant Filter for metadata filtering.
+            limit: Maximum number of points to return.
+
+        Returns:
+            List of Point objects with payload (no vectors).
+        """
+        records, _ = self._client.scroll(
+            collection_name=settings.embedding_collection_name,
+            scroll_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return records
+
+    def get_point(self, point_id: str) -> Any:
+        """
+        Retrieve a single point by ID.
+
+        Args:
+            point_id: UUID string of the point.
+
+        Returns:
+            Point object with vector and payload, or None if not found.
+        """
+        try:
+            points = self._client.retrieve(
+                collection_name=settings.embedding_collection_name,
+                ids=[point_id],
+                with_payload=True,
+                with_vectors=True,
+            )
+            return points[0] if points else None
+        except Exception as e:
+            logger.error("QdrantService: failed to retrieve point %s: %s", point_id, str(e))
+            return None

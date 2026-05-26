@@ -160,6 +160,7 @@ class EmbeddingPipeline:
                         # ── Req 10.1, 10.2: Build payload ─────────
                         if standalone:
                             payload = {
+                                "chunk_id": chunk.get("id", str(point_id)),
                                 "project_id": str(project_id),
                                 "document_id": str(document_id),
                                 "section": chunk.get("section", ""),
@@ -172,6 +173,7 @@ class EmbeddingPipeline:
                             }
                         else:
                             payload = {
+                                "chunk_id": str(chunk.id),
                                 "project_id": str(project_id),
                                 "document_id": str(document_id),
                                 "section": chunk.section,
