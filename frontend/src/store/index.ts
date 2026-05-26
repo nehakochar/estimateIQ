@@ -6,6 +6,7 @@ import workspaceReducer from "./slices/workspaceSlice";
 import { documentsApi } from "@/services/documentsApi";
 import { jobsApi } from "@/services/jobsApi";
 import { retrievalApi } from "@/services/retrievalApi";
+import { projectsApi } from "@/services/projectsApi";
 
 export const store = configureStore({
   reducer: {
@@ -15,6 +16,7 @@ export const store = configureStore({
     [documentsApi.reducerPath]: documentsApi.reducer,
     [jobsApi.reducerPath]: jobsApi.reducer,
     [retrievalApi.reducerPath]: retrievalApi.reducer,
+    [projectsApi.reducerPath]: projectsApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
@@ -22,9 +24,20 @@ export const store = configureStore({
         ignoredPaths: ["upload.files"],
         ignoredActions: ["upload/addFiles"],
       },
-    }).concat(documentsApi.middleware, jobsApi.middleware, retrievalApi.middleware),
+    }).concat(
+      documentsApi.middleware,
+      jobsApi.middleware,
+      retrievalApi.middleware,
+      projectsApi.middleware,
+    ),
   devTools: import.meta.env.VITE_ENVIRONMENT !== "production",
 });
+
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
+
+export const useAppDispatch = () => useDispatch<AppDispatch>();
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
 
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

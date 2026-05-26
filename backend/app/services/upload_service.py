@@ -212,7 +212,7 @@ class UploadService:
             )
 
         # ── Step 4: Insert Project row ────────────────────────────
-        project = Project()
+        project = Project(name="", client_name=None)
         try:
             self.db.add(project)
             self.db.commit()

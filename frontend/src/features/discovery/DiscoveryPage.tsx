@@ -1,31 +1,24 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { portfolioData, type Project, toSlug } from "@/data/portfolio";
+import { toSlug } from "@/data/portfolio";
+import { useListProjectsQuery } from "@/services/projectsApi";
+import type { ProjectResponse } from "@/services/projectsApi";
 import { CreateProjectModal } from "./CreateProjectModal";
 
 export function DiscoveryPage() {
   const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
-  const [projects, setProjects] = useState<Project[]>(portfolioData);
 
-  const handleCreate = (data: { projectName: string; clientName?: string }) => {
-    const slug = toSlug(data.projectName);
-    const newProject: Project = {
-      id: `proj-${Date.now()}`,
-      slug,
-      name: data.projectName,
-      desc: data.clientName ? `Client: ${data.clientName}` : "No description provided.",
-      badge: "Pending Audit",
-      statusClass: "b-pending",
-      progress: 0,
-      reqCount: 0,
-      requirements: [],
-      modules: [],
-      estimates: [],
-      timeline: [],
-      docs: [],
-    };
-    setProjects((prev) => [newProject, ...prev]);
+  const { data, isLoading, isError, refetch } = useListProjectsQuery();
+  const projects: ProjectResponse[] = data?.projects ?? [];
+
+  const handleCreated = (_projectId: string) => {
+    // RTK Query auto-refetches via tag invalidation; nothing extra needed.
+  };
+
+  const handleOpenProject = (project: ProjectResponse) => {
+    const slug = toSlug(project.name) || project.id;
+    navigate(`/projects/${slug}/upload`);
   };
 
   return (
@@ -75,7 +68,7 @@ export function DiscoveryPage() {
           {/* KPI cards */}
           <div className="kpi-container">
             <div className="kpi-card">
-              <div className="kpi-value">{projects.length} Workspaces</div>
+              <div className="kpi-value">{isLoading ? "—" : `${projects.length} Workspaces`}</div>
               <div className="kpi-label">Active Core Systems</div>
               <div className="kpi-trend">⚡ Operational Live Stack</div>
             </div>
@@ -96,37 +89,87 @@ export function DiscoveryPage() {
             </div>
           </div>
 
+          {/* Loading state */}
+          {isLoading && (
+            <div className="project-grid">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="project-card" style={{ opacity: 0.5, pointerEvents: "none" }}>
+                  <div>
+                    <div className="project-card-header">
+                      <span className="badge b-pending">Loading…</span>
+                    </div>
+                    <div className="project-title" style={{ background: "var(--border)", borderRadius: 4, height: 20, width: "60%" }} />
+                    <div className="project-desc" style={{ background: "var(--border)", borderRadius: 4, height: 14, width: "80%", marginTop: 8 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error state */}
+          {isError && !isLoading && (
+            <div style={{ textAlign: "center", padding: "2rem", color: "var(--muted-foreground)" }}>
+              <p>Failed to load projects.</p>
+              <button className="btn btn-ghost" style={{ marginTop: "0.75rem" }} onClick={() => refetch()}>
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!isLoading && !isError && projects.length === 0 && (
+            <div style={{ textAlign: "center", padding: "3rem", color: "var(--muted-foreground)" }}>
+              <p style={{ marginBottom: "1rem" }}>No projects yet. Create your first one to get started.</p>
+              <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Create New Project
+              </button>
+            </div>
+          )}
+
           {/* Project grid */}
-          <div className="project-grid">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                className="project-card"
-                onClick={() => navigate(`/projects/${p.slug}/upload`)}
-              >
-                <div>
-                  <div className="project-card-header">
-                    <span className={`badge ${p.statusClass}`}>{p.badge}</span>
-                    <span className="project-req-count">{p.reqCount} Req Elements</span>
+          {!isLoading && !isError && projects.length > 0 && (
+            <div className="project-grid">
+              {projects.map((p) => (
+                <div
+                  key={p.id}
+                  className="project-card"
+                  onClick={() => handleOpenProject(p)}
+                >
+                  <div>
+                    <div className="project-card-header">
+                      <span className={`badge ${p.status === "active" ? "b-active" : p.status === "pipeline" ? "b-pipeline" : "b-pending"}`}>
+                        {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
+                      </span>
+                      <span className="project-req-count">0 Req Elements</span>
+                    </div>
+                    <div className="project-title">{p.name}</div>
+                    <div className="project-desc">
+                      {p.client_name ? `Client: ${p.client_name}` : "No client specified."}
+                    </div>
                   </div>
-                  <div className="project-title">{p.name}</div>
-                  <div className="project-desc">{p.desc}</div>
+                  <div>
+                    <div className="project-progress-header">
+                      <span>Target Architecture Setup</span>
+                      <span className="project-progress-pct">0%</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: "0%" }} />
+                    </div>
+                    <div className="project-meta">
+                      <span>
+                        Created {new Date(p.created_at).toLocaleDateString()}
+                      </span>
+                      <span>Click to open workspace →</span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="project-progress-header">
-                    <span>Target Architecture Setup</span>
-                    <span className="project-progress-pct">{p.progress}%</span>
-                  </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${p.progress}%` }} />
-                  </div>
-                  <div className="project-meta">
-                    <span>Click to open workspace →</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
         </div>
       </div>
@@ -134,7 +177,7 @@ export function DiscoveryPage() {
       <CreateProjectModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        onCreate={handleCreate}
+        onCreated={handleCreated}
       />
     </div>
   );
