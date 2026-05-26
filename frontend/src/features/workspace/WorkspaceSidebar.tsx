@@ -1,6 +1,5 @@
 import { useAppSelector } from "@/store";
 import { type WorkspacePanel } from "@/store/slices/workspaceSlice";
-import { portfolioData } from "@/data/portfolio";
 
 const navItems: { id: WorkspacePanel; label: string; icon: React.ReactNode }[] = [
   {
@@ -59,16 +58,15 @@ const navItems: { id: WorkspacePanel; label: string; icon: React.ReactNode }[] =
 ];
 
 interface WorkspaceSidebarProps {
+  projectName: string;
   onPanelSwitch: (panel: WorkspacePanel) => void;
   onExitToHub: () => void;
 }
 
-export function WorkspaceSidebar({ onPanelSwitch, onExitToHub }: WorkspaceSidebarProps) {
-  const { selectedProjectId, activePanel } = useAppSelector((s) => s.workspace);
-  const project = portfolioData.find((p) => p.id === selectedProjectId);
-  const reqCount = project?.requirements.length ?? 0;
-  const projectLabel = project
-    ? project.name.split(" ")[0] + " Architecture Workspace"
+export function WorkspaceSidebar({ projectName, onPanelSwitch, onExitToHub }: WorkspaceSidebarProps) {
+  const { activePanel } = useAppSelector((s) => s.workspace);
+  const projectLabel = projectName
+    ? projectName.split(" ")[0] + " Architecture Workspace"
     : "Current Context";
 
   return (
@@ -96,9 +94,6 @@ export function WorkspaceSidebar({ onPanelSwitch, onExitToHub }: WorkspaceSideba
         >
           {item.icon}
           {item.label}
-          {item.id === "requirements" && (
-            <span className="nav-badge">{reqCount}</span>
-          )}
         </div>
       ))}
 

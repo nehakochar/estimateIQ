@@ -21,6 +21,13 @@ export default defineConfig({
   },
   server: {
     port: 7000,
+    // When running inside Docker, HMR WebSocket must advertise the host
+    // machine's address (localhost) so the browser can connect back to it.
+    // VITE_HMR_HOST / VITE_HMR_PORT are injected by docker-compose.
+    hmr: {
+      host: process.env.VITE_HMR_HOST ?? "localhost",
+      port: Number(process.env.VITE_HMR_PORT ?? 3000),
+    },
     proxy: {
       "/api": {
         target: "http://backend:8000",

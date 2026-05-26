@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { toSlug } from "@/data/portfolio";
 import { useListProjectsQuery } from "@/services/projectsApi";
 import type { ProjectResponse } from "@/services/projectsApi";
 import { CreateProjectModal } from "./CreateProjectModal";
@@ -17,8 +16,8 @@ export function DiscoveryPage() {
   };
 
   const handleOpenProject = (project: ProjectResponse) => {
-    const slug = toSlug(project.name) || project.id;
-    navigate(`/projects/${slug}/upload`);
+    // Use the project UUID as the URL param — reliable, no slug lookup needed
+    navigate(`/projects/${project.id}/upload`);
   };
 
   return (
@@ -143,22 +142,15 @@ export function DiscoveryPage() {
                     <div className="project-card-header">
                       <span className={`badge ${p.status === "active" ? "b-active" : p.status === "pipeline" ? "b-pipeline" : "b-pending"}`}>
                         {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
-                      </span>
-                      <span className="project-req-count">0 Req Elements</span>
+                      </span>                     
                     </div>
                     <div className="project-title">{p.name}</div>
                     <div className="project-desc">
                       {p.client_name ? `Client: ${p.client_name}` : "No client specified."}
                     </div>
                   </div>
-                  <div>
-                    <div className="project-progress-header">
-                      <span>Target Architecture Setup</span>
-                      <span className="project-progress-pct">0%</span>
-                    </div>
-                    <div className="progress-bar">
-                      <div className="progress-fill" style={{ width: "0%" }} />
-                    </div>
+                  <div>              
+                    
                     <div className="project-meta">
                       <span>
                         Created {new Date(p.created_at).toLocaleDateString()}

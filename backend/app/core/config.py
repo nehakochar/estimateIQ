@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # App
     backend_port: int = 8000
+    cors_origins: str = "http://localhost:3000,http://localhost:7000"
 
     # Upload limits
     upload_max_files: int = 10

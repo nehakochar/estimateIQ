@@ -17,6 +17,7 @@ How uvicorn uses this file:
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.health import router as health_router
 from app.api.routes.upload import router as upload_router
@@ -25,6 +26,7 @@ from app.api.routes.documents import router as documents_router, router_projects
 from app.api.routes.projects import router as projects_router  # Project CRUD
 from app.api.routes.semantic_chunks import router as semantic_chunks_router  # Phase 6
 from app.api.routes.retrieval import router as retrieval_router  # Phase 9
+from app.core.config import settings
 from app.core.database import Base, engine
 
 
@@ -62,6 +64,22 @@ app = FastAPI(
     ),
     version="0.2.0",
     lifespan=lifespan,
+)
+
+
+# ─────────────────────────────────────────────
+# CORS MIDDLEWARE
+# ─────────────────────────────────────────────
+# Must be added before routers so preflight OPTIONS requests are handled.
+# Origins are read from CORS_ORIGINS in .env (comma-separated).
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

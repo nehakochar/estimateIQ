@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { Outlet, useParams, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { enterProject, exitToDiscovery, switchPanel, switchProject, type WorkspacePanel } from "@/store/slices/workspaceSlice";
-import { portfolioData } from "@/data/portfolio";
+import { enterProject, exitToDiscovery, switchPanel, type WorkspacePanel } from "@/store/slices/workspaceSlice";
+import { useListProjectsQuery } from "@/services/projectsApi";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 // Map URL segment → WorkspacePanel type
@@ -23,16 +23,18 @@ const PANEL_LABEL: Record<WorkspacePanel, string> = {
 };
 
 export function WorkspaceShell() {
-  const { slug } = useParams<{ slug: string }>();
+  // The URL param is the project UUID (e.g. /projects/abc-123/upload)
+  const { slug: projectId } = useParams<{ slug: string }>();
   const navigate  = useNavigate();
   const location  = useLocation();
   const dispatch  = useAppDispatch();
-  const { selectedProjectId, activePanel } = useAppSelector((s) => s.workspace);
+  const { activePanel } = useAppSelector((s) => s.workspace);
 
-  // Find project by slug
-  const project = portfolioData.find((p) => p.slug === slug);
+  // Fetch all projects and find the one matching the UUID in the URL
+  const { data, isLoading } = useListProjectsQuery();
+  const project = data?.projects.find((p) => p.id === projectId);
 
-  // Sync Redux state when slug changes
+  // Sync Redux state when project changes
   useEffect(() => {
     if (project) dispatch(enterProject(project.id));
   }, [project?.id]);
@@ -45,19 +47,23 @@ export function WorkspaceShell() {
     }
   }, [location.pathname]);
 
-  // Unknown slug → 404
+  // Still loading — show nothing (avoids flash to 404)
+  if (isLoading) {
+    return (
+      <div className="workspace-shell">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--muted-foreground)" }}>
+          Loading project…
+        </div>
+      </div>
+    );
+  }
+
+  // Project not found after load → 404
   if (!project) return <Navigate to="/404" replace />;
 
   const handlePanelSwitch = (panel: WorkspacePanel) => {
     dispatch(switchPanel(panel));
-    navigate(`/projects/${slug}/${panel}`);
-  };
-
-  const handleProjectSwitch = (newSlug: string) => {
-    const newProject = portfolioData.find((p) => p.id === newSlug);
-    if (!newProject) return;
-    dispatch(switchProject(newProject.id));
-    navigate(`/projects/${newProject.slug}/${activePanel}`);
+    navigate(`/projects/${projectId}/${panel}`);
   };
 
   const handleExitToHub = () => {
@@ -68,6 +74,7 @@ export function WorkspaceShell() {
   return (
     <div className="workspace-shell">
       <WorkspaceSidebar
+        projectName={project.name}
         onPanelSwitch={handlePanelSwitch}
         onExitToHub={handleExitToHub}
       />
@@ -77,21 +84,10 @@ export function WorkspaceShell() {
         <div className="topbar">
           <div className="topbar-left">
             <span className="topbar-title">{PANEL_LABEL[activePanel]}</span>
-            <span className="topbar-sub">— Tracking Context</span>
-
-            <div className="topbar-project-switcher">
-              <span className="topbar-divider">/</span>
-              <select
-                className="project-dropdown"
-                value={selectedProjectId ?? ""}
-                onChange={(e) => handleProjectSwitch(e.target.value)}
-              >
-                <option value="" disabled>Change Project Context...</option>
-                {portfolioData.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
+            <span className="topbar-sub">— {project.name}</span>
+            {project.client_name && (
+              <span className="topbar-sub"> · {project.client_name}</span>
+            )}
           </div>
 
           <div className="topbar-right">
