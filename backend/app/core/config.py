@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     semantic_sentence_chunk_size: int = 512
     semantic_sentence_chunk_overlap: int = 64
 
+    # Embeddings
+    embedding_batch_size: int = 32
+    embedding_collection_name: str = "rfp_chunks"
+    embedding_debug_output_root: str = "storage/debug/embeddings"
+
     @field_validator(
         "upload_max_files",
         "upload_max_total_mb",
@@ -55,6 +60,7 @@ class Settings(BaseSettings):
         "semantic_splitter_buffer_size",
         "semantic_sentence_chunk_size",
         "semantic_sentence_chunk_overlap",
+        "embedding_batch_size",
     )
     @classmethod
     def must_be_positive(cls, v: float) -> float:

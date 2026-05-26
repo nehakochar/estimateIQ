@@ -43,7 +43,8 @@ async def lifespan(app: FastAPI):
     # with Base.metadata so create_all knows about all three tables.
     import app.models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    # Use checkfirst=True to avoid errors when indexes already exist
+    Base.metadata.create_all(bind=engine, checkfirst=True)
     yield
     # (shutdown logic can be added here in the future)
 

@@ -27,6 +27,7 @@ import logging
 from app.core.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.services.semantic_chunking.service import SemanticChunkingService
+from app.tasks.embedding_tasks import embed_document
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,8 @@ def semantic_chunk_document(document_id: str, project_id: str) -> dict:
     try:
         service = SemanticChunkingService(db=db)
         service.run(document_id=document_id, project_id=project_id)
+        # Chain Phase 8: trigger embedding after classification completes
+        embed_document.delay(document_id, project_id)
         logger.info(
             "semantic_chunk_document task completed: document=%s", document_id
         )

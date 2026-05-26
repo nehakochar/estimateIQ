@@ -31,12 +31,12 @@ class DocumentChunk(Base):
 
     # ── Foreign key → documents table ────────────────────────────
     document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False
     )
 
     # ── Foreign key → projects table ─────────────────────────────
     project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
     )
 
     # ── Self-referential FK (parent chunk, nullable for root chunks) ──

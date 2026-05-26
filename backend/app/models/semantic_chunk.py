@@ -62,6 +62,14 @@ class SemanticChunk(Base):
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # ── Embedding tracking ───────────────────────────────────────
+    embedding_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="pending"
+    )
+    vector_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, default=None
+    )
+
     # ── Timestamps ────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
