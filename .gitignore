@@ -3,5 +3,29 @@ __pycache__/
 .pytest_cache/
 .env
 storage/uploads/
+storage/debug/
 .kiro/
 
+# Test and development files
+scripts/test_pipeline.py
+sample_rfp.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
