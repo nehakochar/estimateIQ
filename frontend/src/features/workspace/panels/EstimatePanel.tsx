@@ -52,7 +52,7 @@ export function EstimatePanel() {
   if (!project || grouped.length === 0) {
     return (
       <div>
-        <div className="section-hdr"><h2>Effort Costing Engine</h2></div>
+        <div className="section-hdr"><h2>Effort Costing Engines</h2></div>
         <div className="card">
           <p className="card-sub">No features found. Add features to requirements first.</p>
         </div>
@@ -63,7 +63,7 @@ export function EstimatePanel() {
   return (
     <div>
       <div className="section-hdr">
-        <h2>Effort Costing Engine</h2>
+        <h2>Effort Costing Engines</h2>
         <span className="ai-tag">Feature-Based Estimation</span>
       </div>
 

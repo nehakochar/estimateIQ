@@ -175,6 +175,7 @@ class UploadService:
         self,
         files: list[UploadFile],
         contents: list[bytes],
+        project_name: str = "",
     ) -> UploadResponse:
         """
         Run the full upload pipeline and return a structured response.
@@ -212,7 +213,11 @@ class UploadService:
             )
 
         # ── Step 4: Insert Project row ────────────────────────────
-        project = Project(name="", client_name=None)
+        # Use provided name, or fall back to first filename stem
+        if not project_name and files:
+            first_name = files[0].filename or ""
+            project_name = first_name.rsplit(".", 1)[0] if "." in first_name else first_name
+        project = Project(name=project_name, client_name=None)
         try:
             self.db.add(project)
             self.db.commit()

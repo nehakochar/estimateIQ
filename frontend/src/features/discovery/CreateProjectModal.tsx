@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useCreateProjectMutation } from "@/services/projectsApi";
+import { useToast } from "@/components/ui/use-toast";
 
 const schema = z.object({
   projectName: z.string().min(1, "Project name is required").max(200),
@@ -21,6 +22,8 @@ interface CreateProjectModalProps {
 export function CreateProjectModal({ open, onClose, onCreated }: CreateProjectModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [createProject, { isLoading, error }] = useCreateProjectMutation();
+  const { toast } = useToast();
+  const [isClosing, setIsClosing] = useState(false);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -30,10 +33,10 @@ export function CreateProjectModal({ open, onClose, onCreated }: CreateProjectMo
   useEffect(() => { if (open) reset(); }, [open, reset]);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !isLoading) onClose(); };
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !isLoading && !isClosing) onClose(); };
     if (open) window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose, isLoading]);
+  }, [open, onClose, isLoading, isClosing]);
 
   const onSubmit = async (data: FormValues) => {
     try {
@@ -41,8 +44,22 @@ export function CreateProjectModal({ open, onClose, onCreated }: CreateProjectMo
         name: data.projectName,
         client_name: data.clientName || undefined,
       }).unwrap();
+      
+      // Show success toast
+      toast({
+        title: "Project created successfully",
+        variant: "default",
+      });
+      
+      // Call the callback immediately
       onCreated?.(result.id);
-      onClose();
+      
+      // Close modal after 2.5 seconds
+      setIsClosing(true);
+      setTimeout(() => {
+        onClose();
+        setIsClosing(false);
+      }, 1000);
     } catch {
       // error is surfaced via the `error` variable from the mutation hook
     }
@@ -61,13 +78,13 @@ export function CreateProjectModal({ open, onClose, onCreated }: CreateProjectMo
     <div
       ref={overlayRef}
       className="modal-overlay"
-      onClick={(e) => { if (e.target === overlayRef.current && !isLoading) onClose(); }}
+      onClick={(e) => { if (e.target === overlayRef.current && !isLoading && !isClosing) onClose(); }}
     >
       <div className="modal-panel">
         {/* Header */}
         <div className="modal-header">
           <h2 className="modal-title">Create New Project</h2>
-          <button className="modal-close-btn" onClick={onClose} disabled={isLoading}>✕</button>
+          <button className="modal-close-btn" onClick={onClose} disabled={isLoading || isClosing}>✕</button>
         </div>
 
         {/* Body */}
@@ -115,12 +132,12 @@ export function CreateProjectModal({ open, onClose, onCreated }: CreateProjectMo
               type="button"
               className="btn btn-ghost"
               onClick={onClose}
-              disabled={isLoading}
+              disabled={isLoading || isClosing}
             >
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary" disabled={isLoading}>
-              {isLoading ? "Creating…" : "Create Project"}
+            <button type="submit" className="btn btn-primary" disabled={isLoading || isClosing}>
+              {isLoading ? "Creating…" : isClosing ? "Closing…" : "Create Project"}
             </button>
           </div>
         </form>

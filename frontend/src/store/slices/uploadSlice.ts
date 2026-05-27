@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
 import { axiosInstance } from "@/services/api-client";
 import { documentsApi } from "@/services/documentsApi";
-import type { Document, UUID } from "@/types";
+import type { FileUploadResult, UploadApiResponse, UUID } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,18 +22,25 @@ interface UploadState {
   files: UploadFile[];
   projectName: string;
   isUploading: boolean;
-  uploadedDocuments: Document[];
+  /** True once the upload API returns successfully — stored as real state, not derived */
+  isSuccess: boolean;
+  /** Per-file results returned by the upload API */
+  uploadedFiles: FileUploadResult[];
   currentProjectId: UUID | null;
   uploadError: string | null;
+  /** Track if we've shown the success toast to avoid duplicates */
+  toastShown: boolean;
 }
 
 const initialState: UploadState = {
   files: [],
   projectName: "",
   isUploading: false,
-  uploadedDocuments: [],
+  isSuccess: false,
+  uploadedFiles: [],
   currentProjectId: null,
   uploadError: null,
+  toastShown: false,
 };
 
 // ─── Async thunk ──────────────────────────────────────────────────────────────
@@ -43,25 +50,22 @@ export interface UploadPayload {
   files: File[];
 }
 
-export interface UploadResponse {
-  project_id: UUID;
-  documents: Document[];
-}
-
 export const uploadDocuments = createAsyncThunk<
-  UploadResponse,
+  UploadApiResponse,
   UploadPayload,
   { rejectValue: string }
 >(
   "upload/uploadDocuments",
   async ({ projectName, files }, { dispatch, rejectWithValue }) => {
     const form = new FormData();
-    form.append("project_name", projectName);
+    if (projectName?.trim()) {
+      form.append("project_name", projectName.trim());
+    }
     files.forEach((file) => form.append("files", file));
 
     try {
-      const response = await axiosInstance.post<UploadResponse>(
-        "/api/upload",
+      const response = await axiosInstance.post<UploadApiResponse>(
+        "/upload",
         form,
         {
           headers: { "Content-Type": "multipart/form-data" },
@@ -74,6 +78,8 @@ export const uploadDocuments = createAsyncThunk<
         }
       );
 
+      console.log("[upload] response:", response.status, response.data);
+
       // Invalidate the documents list cache so DocumentsPage auto-refreshes
       dispatch(documentsApi.util.invalidateTags([{ type: "Document", id: "LIST" }]));
 
@@ -81,6 +87,7 @@ export const uploadDocuments = createAsyncThunk<
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Upload failed";
+      console.error("[upload] error:", err);
       return rejectWithValue(message);
     }
   }
@@ -123,11 +130,15 @@ export const uploadSlice = createSlice({
     resetUpload() {
       return initialState;
     },
+    markToastShown(state) {
+      state.toastShown = true;
+    },
   },
   extraReducers: (builder) => {
     builder
       .addCase(uploadDocuments.pending, (state) => {
         state.isUploading = true;
+        state.isSuccess = false;
         state.uploadError = null;
         state.files.forEach((f) => {
           f.status = "uploading";
@@ -135,8 +146,10 @@ export const uploadSlice = createSlice({
       })
       .addCase(uploadDocuments.fulfilled, (state, action) => {
         state.isUploading = false;
-        state.uploadedDocuments = action.payload.documents;
+        state.isSuccess = true;
+        state.uploadedFiles = action.payload.uploaded_files;
         state.currentProjectId = action.payload.project_id;
+        state.toastShown = false; // Reset so toast can be shown
         state.files.forEach((f) => {
           f.status = "success";
           f.progress = 100;
@@ -144,6 +157,7 @@ export const uploadSlice = createSlice({
       })
       .addCase(uploadDocuments.rejected, (state, action) => {
         state.isUploading = false;
+        state.isSuccess = false;
         state.uploadError = action.payload ?? "Upload failed";
         state.files.forEach((f) => {
           if (f.status === "uploading") {
@@ -162,6 +176,7 @@ export const {
   setProjectName,
   setGlobalProgress,
   resetUpload,
+  markToastShown,
 } = uploadSlice.actions;
 
 export default uploadSlice.reducer;

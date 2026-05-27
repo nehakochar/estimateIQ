@@ -6,7 +6,7 @@ delegates all validation, storage, and DB persistence to UploadService,
 and returns a structured per-file result summary.
 """
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -31,21 +31,9 @@ router = APIRouter(prefix="/upload", tags=["Upload"])
 )
 async def upload_rfp(
     files: list[UploadFile] = File(..., description="One or more RFP files to upload"),
+    project_name: str = Form(default="", description="Optional name for this upload batch"),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
-    """
-    Upload one or more RFP documents.
-
-    - Validates file count (1–10), types (.pdf/.docx/.xlsx), and sizes.
-    - Creates a Project record and per-project storage directory.
-    - Writes each file to disk with a UUID-based name.
-    - Creates a Document record for every file (uploaded or failed).
-    - Returns HTTP 200 with per-file results even if some files fail.
-    - Returns HTTP 400 for validation failures, HTTP 500 for server errors.
-    """
-    # Read all file bytes up front so we can pass sizes to the validator
-    # and avoid multiple async reads inside the service layer.
     contents: list[bytes] = [await f.read() for f in files]
-
     service = UploadService(db=db)
-    return service.process_upload(files=files, contents=contents)
+    return service.process_upload(files=files, contents=contents, project_name=project_name.strip())

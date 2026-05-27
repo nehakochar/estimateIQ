@@ -26,7 +26,7 @@ export default defineConfig({
     // VITE_HMR_HOST / VITE_HMR_PORT are injected by docker-compose.
     hmr: {
       host: process.env.VITE_HMR_HOST ?? "localhost",
-      port: Number(process.env.VITE_HMR_PORT ?? 3000),
+      port: Number(process.env.VITE_HMR_PORT ?? 7000),
     },
     proxy: {
       "/api": {

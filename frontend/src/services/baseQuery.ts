@@ -4,7 +4,10 @@ import { axiosInstance } from "./api-client";
 
 /**
  * RTK Query baseQuery backed by our Axios instance.
- * Supports all standard RTK Query features: tags, invalidation, polling, etc.
+ *
+ * axiosInstance already has baseURL = VITE_API_BASE_URL, so endpoint URLs
+ * here are just paths (e.g. "/documents/123/status") — no need to repeat
+ * the origin. The baseUrl param is kept for flexibility but defaults to "".
  */
 export const axiosBaseQuery =
   (

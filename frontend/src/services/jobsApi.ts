@@ -4,12 +4,12 @@ import type { ProcessingJob, UUID } from "@/types";
 
 export const jobsApi = createApi({
   reducerPath: "jobsApi",
-  baseQuery: axiosBaseQuery({ baseUrl: "" }),
+  baseQuery: axiosBaseQuery(),
   tagTypes: ["Job"],
   endpoints: (builder) => ({
     listJobsByDocument: builder.query<ProcessingJob[], UUID>({
       query: (documentId) => ({
-        url: "/api/jobs",
+        url: "/jobs",
         params: { document_id: documentId },
       }),
       providesTags: (_result, _err, documentId) => [
@@ -18,7 +18,7 @@ export const jobsApi = createApi({
     }),
 
     getJob: builder.query<ProcessingJob, UUID>({
-      query: (id) => ({ url: `/api/jobs/${id}` }),
+      query: (id) => ({ url: `/jobs/${id}` }),
       providesTags: (_result, _err, id) => [{ type: "Job", id }],
     }),
   }),

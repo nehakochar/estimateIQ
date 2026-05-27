@@ -21,7 +21,7 @@ export interface ProjectCreate {
 
 export const projectsApi = createApi({
   reducerPath: "projectsApi",
-  baseQuery: axiosBaseQuery({ baseUrl: "" }),
+  baseQuery: axiosBaseQuery(),
   tagTypes: ["Project"],
   endpoints: (builder) => ({
     // GET /projects

@@ -2,8 +2,7 @@ backend/venv/
 __pycache__/
 .pytest_cache/
 .env
-storage/uploads/
-storage/debug/
+storage/
 .kiro/
 node_modules/
 # Test and development files

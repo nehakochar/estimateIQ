@@ -4,11 +4,12 @@ import type { UploadPayload } from "@/store/slices/uploadSlice";
 
 /**
  * Convenience hook that wraps the uploadDocuments async thunk.
- * Returns the dispatch-bound upload function plus relevant state.
+ * isSuccess is read from Redux state (set in fulfilled case) — not derived —
+ * so it's stable across re-renders and won't flicker.
  */
 export function useUpload() {
   const dispatch = useAppDispatch();
-  const { isUploading, uploadError, currentProjectId, uploadedDocuments } =
+  const { isUploading, isSuccess, uploadError, currentProjectId, uploadedFiles } =
     useAppSelector((s) => s.upload);
 
   const upload = (payload: UploadPayload) =>
@@ -17,9 +18,9 @@ export function useUpload() {
   return {
     upload,
     isUploading,
+    isSuccess,
     uploadError,
     currentProjectId,
-    uploadedDocuments,
-    isSuccess: !isUploading && currentProjectId !== null && uploadError === null,
+    uploadedFiles,
   };
 }

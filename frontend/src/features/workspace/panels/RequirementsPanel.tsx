@@ -1,15 +1,50 @@
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setReqTab } from "@/store/slices/workspaceSlice";
-import { portfolioData, REQ_TABS, type ReqTab } from "@/data/portfolio";
+import { useSearchByCategoryQuery } from "@/services/retrievalApi";
+import { REQ_TABS, type ReqTab } from "@/data/portfolio";
+
+// Map backend category names to frontend tab names
+const CATEGORY_MAP: Record<string, string> = {
+  "functional": "Functional",
+  "non_functional": "Non-Functional",
+  "ui_ux": "UI/UX",
+  "integrations": "Integrations",
+  "security_compliance": "Security & Compliance",
+  "data_validation": "Data & Validation",
+  "workflow_roles": "Workflow & Roles",
+  "infrastructure_deployment": "Infrastructure & Deployment",
+  "risks_assumptions_dependencies": "Risks / Assumptions / Dependencies",
+  "open_questions": "Open Questions",
+  "out_of_scope": "Out of Scope",
+};
+
+// Reverse map: frontend tab names to backend category names
+const TAB_TO_CATEGORY: Record<string, string> = Object.entries(CATEGORY_MAP).reduce(
+  (acc, [key, val]) => ({ ...acc, [val]: key }),
+  {}
+);
 
 export function RequirementsPanel() {
   const dispatch = useAppDispatch();
   const { selectedProjectId, activeReqTab } = useAppSelector((s) => s.workspace);
-  const project = portfolioData.find((p) => p.id === selectedProjectId);
 
-  const filtered = project?.requirements.filter(
-    (r) => (r.category ?? "Functional") === activeReqTab
-  ) ?? [];
+  // Convert tab name to backend category name
+  const backendCategory = TAB_TO_CATEGORY[activeReqTab] || "functional";
+
+  // Fetch requirements for the current category
+  const { data, isLoading, error } = useSearchByCategoryQuery(
+    {
+      projectId: selectedProjectId || "",
+      category: backendCategory,
+      topK: 100,
+    },
+    {
+      skip: !selectedProjectId,
+    }
+  );
+
+  // Handle both cases: data could be the response object or the results array directly
+  const requirements = Array.isArray(data) ? data : (Array.isArray(data?.results) ? data.results : []);
 
   return (
     <div>
@@ -21,7 +56,6 @@ export function RequirementsPanel() {
       {/* Tabs */}
       <div className="req-tabs">
         {REQ_TABS.map((tab) => {
-          const count = project?.requirements.filter((r) => (r.category ?? "Functional") === tab).length ?? 0;
           return (
             <div
               key={tab}
@@ -29,9 +63,9 @@ export function RequirementsPanel() {
               onClick={() => dispatch(setReqTab(tab as ReqTab))}
             >
               {tab}
-              {count > 0 && (
+              {data && (
                 <span style={{ marginLeft: 5, fontSize: 9, background: "rgba(108,99,255,0.2)", color: "var(--accent2)", padding: "1px 5px", borderRadius: 8 }}>
-                  {count}
+                  {data.total_results}
                 </span>
               )}
             </div>
@@ -45,24 +79,44 @@ export function RequirementsPanel() {
             <tr>
               <th style={{ width: 110 }}>ID Code</th>
               <th>System Component Description Specification</th>
-              <th style={{ width: 130 }}>Priority Level</th>
-              <th style={{ width: 130 }}>Complexity Metric</th>
+              <th style={{ width: 130 }}>Confidence</th>
+              <th style={{ width: 130 }}>Type</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {isLoading ? (
+              <tr>
+                <td colSpan={4} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
+                  Loading requirements…
+                </td>
+              </tr>
+            ) : error ? (
+              <tr>
+                <td colSpan={4} style={{ textAlign: "center", color: "#f87171", padding: 32 }}>
+                  Failed to load requirements. Please try again.
+                </td>
+              </tr>
+            ) : requirements.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ textAlign: "center", color: "var(--text3)", padding: 32 }}>
                   No requirements in this category.
                 </td>
               </tr>
             ) : (
-              filtered.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ fontFamily: "'DM Mono', monospace", color: "var(--accent2)" }}>{r.id}</td>
-                  <td>{r.desc}</td>
-                  <td><span className="badge b-pending">{r.priority}</span></td>
-                  <td><span className="badge b-pipeline">{r.comp}</span></td>
+              requirements.map((req, idx) => (
+                <tr key={req.chunk_id}>
+                  <td style={{ fontFamily: "'DM Mono', monospace", color: "var(--accent2)" }}>
+                    {req.section ? `${req.section.slice(0, 8)}` : `REQ-${String(idx + 1).padStart(3, "0")}`}
+                  </td>
+                  <td>{req.text}</td>
+                  <td>
+                    <span className="badge b-pipeline">
+                      {Math.round(req.confidence_score * 100)}%
+                    </span>
+                  </td>
+                  <td>
+                    <span className="badge b-pending">{req.chunk_type}</span>
+                  </td>
                 </tr>
               ))
             )}

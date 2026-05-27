@@ -12,7 +12,9 @@ These schemas define the JSON shape returned by:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+import uuid
+
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 # ── Individual semantic chunk ─────────────────────────────────────────────
@@ -28,9 +30,9 @@ class SemanticChunkResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: uuid.UUID
     chunk_index: int
-    source_chunk_id: str | None
+    source_chunk_id: uuid.UUID | None
     section: str
     subsection: str
     category: str
@@ -39,6 +41,11 @@ class SemanticChunkResponse(BaseModel):
     token_count: int
     confidence_score: float
     text: str
+
+    @field_serializer("id", "source_chunk_id")
+    def serialize_uuid(self, value: uuid.UUID | None) -> str | None:
+        """Serialize UUID objects to strings for JSON output."""
+        return str(value) if value is not None else None
 
 
 # ── Document-level semantic chunk collection ──────────────────────────────
