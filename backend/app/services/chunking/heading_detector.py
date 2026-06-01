@@ -6,8 +6,13 @@ Detection priority (highest to lowest):
   1. 3-segment numbered  e.g. "1.1.1 Approval Workflow"  → level 3
   2. 2-segment numbered  e.g. "1.1 Vendor Mgmt"          → level 2
   3. 1-segment numbered  e.g. "1. Scope", "2) Overview"  → level 1
-  4. ALL-CAPS line ≤ 80 chars, no terminal punctuation   → level 1
-  5. Title-Case line ≤ 80 chars, no terminal punctuation → level 1
+  4. ALL-CAPS line, 10–80 chars, ≥ 2 words               → level 1
+  5. Title-Case line, 10–80 chars, ≥ 2 words             → level 1
+
+Strict guards prevent ordinary body text from matching:
+  - Single words (e.g. "Contract", "Database") are NOT headings
+  - Lines ending with punctuation are NOT headings
+  - List items, labels, and table markers are skipped
 
 If no headings are detected, a synthetic level-1 heading is created from file_name.
 """
@@ -35,6 +40,9 @@ _PATTERN_L1 = re.compile(r"^\d+[\.\)]\s+\S")
 # Terminal punctuation characters that disqualify title-style headings
 _TERMINAL_PUNCT = re.compile(r"[.?!]$")
 
+# List marker prefixes to skip
+_LIST_PREFIXES = ("- ", "• ", "* ", "– ", "— ")
+
 
 @dataclass
 class DetectedHeading:
@@ -60,22 +68,53 @@ def _numbered_level(line: str) -> int | None:
 
 def _is_title_heading(line: str) -> bool:
     """Return True if *line* qualifies as a title-style heading (ALL-CAPS or
-    Title-Case, ≤ 80 chars, no terminal punctuation)."""
+    Title-Case) under strict rules that prevent ordinary body text from matching.
+
+    A line qualifies ONLY when ALL of the following hold:
+      1. Length between 10 and 80 characters (stripped).
+      2. Contains at least 2 words.
+      3. Contains at least one alphabetic character.
+      4. Does NOT end with terminal punctuation (. ? !).
+      5. Does NOT start with a list marker (- • * – —).
+      6. Does NOT end with a colon (label pattern like "Note:").
+      7. Is ALL CAPS with ≥ 2 words and ≥ 8 characters, OR
+         is Title Case with ≥ 2 words.
+    """
     stripped = line.strip()
-    if not stripped:
+
+    # 1. Length gate — eliminates very short words and very long sentences
+    if len(stripped) < 10 or len(stripped) > 80:
         return False
-    if len(stripped) > 80:
+
+    # 2. Word count gate — eliminates single-word matches like "Contract"
+    words = stripped.split()
+    if len(words) < 2:
         return False
-    if _TERMINAL_PUNCT.search(stripped):
-        return False
-    # Must contain at least one alphabetic character to avoid matching
-    # pure numeric or symbol lines.
+
+    # 3. Must contain at least one alphabetic character
     if not any(c.isalpha() for c in stripped):
         return False
+
+    # 4. No terminal punctuation — sentences are not headings
+    if _TERMINAL_PUNCT.search(stripped):
+        return False
+
+    # 5. No list markers at the start
+    if stripped[0] in ("-", "•", "*", "–", "—"):
+        return False
+
+    # 6. No label pattern (ends with colon)
+    if stripped.endswith(":"):
+        return False
+
+    # 7a. ALL CAPS: need ≥ 2 words (already checked) AND ≥ 8 characters
     if stripped == stripped.upper():
-        return True
+        return len(stripped) >= 8
+
+    # 7b. Title Case: need ≥ 2 words (already checked above)
     if stripped == stripped.title():
         return True
+
     return False
 
 
@@ -111,14 +150,27 @@ class HeadingDetector:
             page_number: int = page_dict.get("page", 1)
             page_text: str = page_dict.get("text", "")
 
-            # Walk line-by-line, tracking the offset of each line within the
-            # full document text (not just within the page).
             line_start = 0
             for line in page_text.splitlines(keepends=True):
                 stripped = line.rstrip("\n\r")
                 candidate = stripped.strip()
 
                 if candidate:
+                    # Skip common list-item prefixes
+                    if any(candidate.startswith(pfx) for pfx in _LIST_PREFIXES):
+                        line_start += len(line)
+                        continue
+
+                    # Skip purely numeric lines (e.g. "123", "1,234")
+                    if re.fullmatch(r"[\d,]+", candidate):
+                        line_start += len(line)
+                        continue
+
+                    # Skip table markers inserted by the parsers
+                    if "[TABLE]" in candidate:
+                        line_start += len(line)
+                        continue
+
                     level = _numbered_level(candidate)
                     if level is None and _is_title_heading(candidate):
                         level = 1
@@ -136,8 +188,6 @@ class HeadingDetector:
                 line_start += len(line)
 
             # Advance the global offset by the full page text length.
-            # Pages are concatenated without any separator, matching the
-            # behaviour expected by HierarchyBuilder.
             char_offset += len(page_text)
 
         # Fallback: synthesise a root heading from the file name.

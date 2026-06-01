@@ -189,6 +189,7 @@ def format_result_for_display(result: dict[str, Any], max_text_length: int = 500
     Format a search result for display/API response.
 
     Truncates text to max_text_length and ensures all fields are present.
+    Passes through title and description fields from the search service.
 
     Args:
         result: Result dict from search.
@@ -204,6 +205,10 @@ def format_result_for_display(result: dict[str, Any], max_text_length: int = 500
     return {
         "chunk_id": result.get("chunk_id", ""),
         "text": text,
+        "title": result.get("title", ""),
+        "description": result.get("description", ""),
+        "req_id": result.get("req_id", ""),
+        "type_label": result.get("type_label", ""),
         "category": result.get("category", ""),
         "section": result.get("section", ""),
         "subsection": result.get("subsection", ""),

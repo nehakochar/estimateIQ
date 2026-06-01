@@ -7,19 +7,15 @@ keyword matching against the chunk's text, section, and subsection fields.
 Confidence scoring:
   1.0 — keyword hit found in chunk text
   0.5 — keyword hit found only in section/subsection headings
-  0.3 — no keyword match (default: "functional")
+  0.5 — no keyword match (default: "functional") — raised from 0.3
+  0.0 — chunk text is too short to classify (< 15 chars) → "other"
 """
 
 from app.services.classification.rules import CATEGORY_PRIORITY, CATEGORY_RULES
 
 
 class RequirementClassifier:
-    """Stateless rule-based classifier for semantic chunks.
-
-    Accepts any duck-typed object with ``text``, ``section``, and
-    ``subsection`` string attributes and returns a
-    ``(category, confidence_score)`` tuple.
-    """
+    """Stateless rule-based classifier for semantic chunks."""
 
     def classify(self, chunk) -> tuple[str, float]:
         """Classify *chunk* into a business category.
@@ -28,16 +24,17 @@ class RequirementClassifier:
         ----------
         chunk:
             Any object exposing ``text``, ``section``, and ``subsection``
-            string attributes (e.g. a ``SemanticChunk`` ORM instance or a
-            plain namespace/dataclass).
+            string attributes.
 
         Returns
         -------
         tuple[str, float]
-            ``(category, confidence_score)`` where *category* is one of the
-            eleven values defined in ``CATEGORY_RULES`` and *confidence_score*
-            is ``1.0``, ``0.5``, or ``0.3``.
+            ``(category, confidence_score)``
         """
+        # Chunks under 15 characters have no meaningful signal — mark as "other"
+        if len((chunk.text or "").strip()) < 15:
+            return "other", 0.0
+
         # --- 1. Normalise inputs -------------------------------------------
         text = (chunk.text or "").lower()
         section = (chunk.section or "").lower()
@@ -65,26 +62,15 @@ class RequirementClassifier:
             winner = self._pick_winner(heading_hits)
         else:
             winner = "functional"
-            confidence_score = 0.3
+            confidence_score = 0.5  # raised from 0.3 — functional is a safe default
 
         return winner, confidence_score
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _pick_winner(hits: dict[str, int]) -> str:
-        """Return the category with the most hits, breaking ties by priority.
-
-        ``CATEGORY_PRIORITY`` is ordered from highest to lowest priority
-        (lower index = higher priority).  When two categories share the same
-        hit count the one that appears earlier in ``CATEGORY_PRIORITY`` wins.
-        """
+        """Return the category with the most hits, breaking ties by priority."""
         max_hits = max(hits.values())
-        # Candidates with the maximum hit count, in priority order
         for category in CATEGORY_PRIORITY:
             if hits.get(category, 0) == max_hits:
                 return category
-        # Fallback — should never be reached if CATEGORY_PRIORITY is complete
         return "functional"

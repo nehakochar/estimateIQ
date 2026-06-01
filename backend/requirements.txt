@@ -68,3 +68,16 @@ tiktoken==0.9.0
 #   model locally inside Docker (no external API calls)
 llama-index-embeddings-huggingface==0.4.0
 sentence-transformers==3.4.1
+
+# ── LLM Requirement Extraction ────────────────────────────────────
+# pdfplumber: table-aware PDF extraction (replaces raw text extraction for
+#   the extraction pipeline — existing PyMuPDF parser is untouched)
+pdfplumber==0.11.4
+
+# google-generativeai: Gemini 2.0 Flash (default, free: 1500 req/day, 1M context)
+#   Get API key at: aistudio.google.com
+google-generativeai==0.8.3
+
+# groq: optional free alternative (14400 req/day, 128K context)
+#   Get API key at: console.groq.com
+groq==0.11.0

@@ -7,6 +7,7 @@ import { documentsApi } from "@/services/documentsApi";
 import { jobsApi } from "@/services/jobsApi";
 import { retrievalApi } from "@/services/retrievalApi";
 import { projectsApi } from "@/services/projectsApi";
+import { extractionApi } from "@/services/extractionApi";
 
 export const store = configureStore({
   reducer: {
@@ -17,6 +18,7 @@ export const store = configureStore({
     [jobsApi.reducerPath]: jobsApi.reducer,
     [retrievalApi.reducerPath]: retrievalApi.reducer,
     [projectsApi.reducerPath]: projectsApi.reducer,
+    [extractionApi.reducerPath]: extractionApi.reducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
@@ -29,6 +31,7 @@ export const store = configureStore({
       jobsApi.middleware,
       retrievalApi.middleware,
       projectsApi.middleware,
+      extractionApi.middleware,
     ),
   devTools: import.meta.env.VITE_ENVIRONMENT !== "production",
 });

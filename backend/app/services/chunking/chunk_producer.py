@@ -1,6 +1,16 @@
 """
-ChunkProducer — converts a HierarchyNode tree into flat ChunkRecord objects
-using LlamaIndex HierarchicalNodeParser (primary) and SentenceSplitter (fallback).
+chunk_producer.py — Converts a HierarchyNode tree into flat ChunkRecord objects.
+
+Strategy:
+  - If a section's combined text (heading + body) is <= 800 tokens, keep it as
+    a single chunk ("hierarchical").
+  - If it exceeds 800 tokens, split with SentenceSplitter at 800 tokens /
+    64-token overlap ("sentence_fallback").
+
+Why remove HierarchicalNodeParser?
+  LlamaIndex's HierarchicalNodeParser was splitting already-small sections into
+  even smaller fragments. For RFP documents each section should stay as one
+  meaningful chunk so the classifier and embedder have enough context to work with.
 """
 
 from __future__ import annotations
@@ -10,15 +20,19 @@ from dataclasses import dataclass
 
 import tiktoken
 from llama_index.core import Document as LlamaDocument
-from llama_index.core.node_parser import HierarchicalNodeParser, SentenceSplitter
+from llama_index.core.node_parser import SentenceSplitter
 
-from app.core.config import settings
 from app.services.chunking.hierarchy_builder import HierarchyNode
 
 logger = logging.getLogger(__name__)
 
 # Module-level tiktoken encoder — initialised once to avoid repeated disk I/O.
 _ENCODING = tiktoken.get_encoding("cl100k_base")
+
+# Maximum tokens per chunk before we fall back to sentence splitting.
+_MAX_TOKENS = 800
+# Overlap between consecutive sentence-split chunks.
+_OVERLAP_TOKENS = 64
 
 
 def _count_tokens(text: str) -> int:
@@ -45,9 +59,8 @@ class ChunkProducer:
     """
     Converts a HierarchyNode tree into a flat list of ChunkRecord objects.
 
-    Primary strategy  : LlamaIndex HierarchicalNodeParser
-    Fallback strategy : SentenceSplitter (when combined_text exceeds
-                        settings.chunking_parent_chunk_size * 1.5 tokens)
+    Each section is kept as one chunk when it fits within _MAX_TOKENS (800).
+    Sections that exceed 800 tokens are split with SentenceSplitter.
     """
 
     def produce(
@@ -128,12 +141,13 @@ class ChunkProducer:
 
         combined_text = f"{node.heading}\n\n{node.body}"
         token_count_combined = _count_tokens(combined_text)
-        threshold = settings.chunking_parent_chunk_size * 1.5
 
-        if token_count_combined <= threshold:
-            chunk_texts = self._split_hierarchical(combined_text)
+        if token_count_combined <= _MAX_TOKENS:
+            # Section fits in one chunk — keep it whole for maximum context.
+            chunk_texts = [combined_text]
             chunk_type = "hierarchical"
         else:
+            # Section is too large — split with SentenceSplitter.
             chunk_texts = self._split_sentence(combined_text)
             chunk_type = "sentence_fallback"
 
@@ -174,45 +188,21 @@ class ChunkProducer:
             )
 
     # ------------------------------------------------------------------
-    # Splitting strategies
+    # Splitting strategy
     # ------------------------------------------------------------------
-
-    def _split_hierarchical(self, text: str) -> list[str]:
-        """
-        Split *text* using LlamaIndex HierarchicalNodeParser.
-
-        HierarchicalNodeParser is configured with the parent/child chunk sizes
-        from settings. We wrap the text in a LlamaDocument, parse it, and
-        return the text of every resulting node.
-
-        If the parser produces no nodes (edge case with very short text), we
-        fall back to returning the original text as a single chunk.
-        """
-        parser = HierarchicalNodeParser.from_defaults(
-            chunk_sizes=[
-                settings.chunking_parent_chunk_size,
-                settings.chunking_child_chunk_size,
-            ],
-            chunk_overlap=settings.chunking_chunk_overlap,
-        )
-        doc = LlamaDocument(text=text)
-        nodes = parser.get_nodes_from_documents([doc])
-
-        texts = [n.get_content() for n in nodes if n.get_content().strip()]
-        return texts if texts else [text]
 
     def _split_sentence(self, text: str) -> list[str]:
         """
-        Split *text* using LlamaIndex SentenceSplitter (fallback strategy).
+        Split *text* using LlamaIndex SentenceSplitter.
 
-        Uses child chunk size and overlap from settings.
+        Used only when a section exceeds _MAX_TOKENS (800) tokens.
+        Respects sentence boundaries to avoid cutting mid-sentence.
         """
         splitter = SentenceSplitter(
-            chunk_size=settings.chunking_child_chunk_size,
-            chunk_overlap=settings.chunking_chunk_overlap,
+            chunk_size=_MAX_TOKENS,
+            chunk_overlap=_OVERLAP_TOKENS,
         )
         doc = LlamaDocument(text=text)
         nodes = splitter.get_nodes_from_documents([doc])
-
         texts = [n.get_content() for n in nodes if n.get_content().strip()]
         return texts if texts else [text]

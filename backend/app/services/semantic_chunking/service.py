@@ -6,7 +6,7 @@ This service is called by the Celery task.  It:
   1. Loads the Document from the database.
   2. Loads all DocumentChunk rows for the document, ordered by chunk_index.
   3. Marks the document as "semantic_chunking".
-  4. Splits each Phase 5 chunk via SemanticSplitter (or passes through unchanged).
+  4. Splits each Phase 5 chunk via SentenceSplitter (or passes through unchanged).
   5. Classifies each semantic chunk via RequirementClassifier.
   6. Writes pre-classification debug snapshot via DebugWriter.
   7. Bulk-inserts SemanticChunk rows.
@@ -14,9 +14,6 @@ This service is called by the Celery task.  It:
   9. Logs split stats, category distribution, and unmatched chunk count.
   10. Marks the document as "classified".
   11. On any exception: rollback, marks "semantic_chunking_failed", logs, does NOT raise.
-
-Mirrors the structure of the existing ChunkingService in
-app/services/chunking/service.py.
 """
 
 from __future__ import annotations
@@ -27,6 +24,8 @@ import uuid
 from collections import Counter
 
 import tiktoken
+from llama_index.core import Document as LlamaDocument
+from llama_index.core.node_parser import SentenceSplitter
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -35,7 +34,6 @@ from app.models.document_chunk import DocumentChunk
 from app.models.semantic_chunk import SemanticChunk
 from app.services.classification.classifier import RequirementClassifier
 from app.services.semantic_chunking.debug_writer import DebugWriter
-from app.services.semantic_chunking.semantic_splitter import SemanticSplitter
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +50,9 @@ class SemanticChunkingService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ── Public entry point ────────────────────────────────────────
-
     def run(self, document_id: str, project_id: str) -> None:
         """
         Execute the full semantic chunking and classification pipeline for one document.
-
-        This method is designed to be called from a Celery task.
-        It never raises — all errors are caught, logged, and written
-        to the database so the API can report them.
-
-        Args:
-            document_id: UUID string of the Document row.
-            project_id:  UUID string of the owning Project (used for chunk rows
-                         and debug output).
         """
         logger.info(
             "SemanticChunkingService.run: document=%s project=%s",
@@ -73,7 +60,6 @@ class SemanticChunkingService:
             project_id,
         )
 
-        # ── 1. Load Document from DB ──────────────────────────────
         document = self._load_document(document_id)
         if document is None:
             logger.error(
@@ -81,7 +67,6 @@ class SemanticChunkingService:
             )
             return
 
-        # ── 2. Load all Phase 5 DocumentChunk rows ────────────────
         try:
             doc_uuid = uuid.UUID(document_id)
         except ValueError:
@@ -97,7 +82,6 @@ class SemanticChunkingService:
             .all()
         )
 
-        # ── 3. Mark as "semantic_chunking" ────────────────────────
         document.upload_status = "semantic_chunking"
         try:
             self.db.commit()
@@ -109,36 +93,32 @@ class SemanticChunkingService:
                 document_id,
                 exc,
             )
-            # If we can't even mark the status, abort — nothing useful to do.
             return
 
-        # ── 4–10. Main pipeline (wrapped in try/except) ───────────
         try:
-            # ── 8.2: Splitting loop ───────────────────────────────
             enc = tiktoken.get_encoding("cl100k_base")
-            splitter = SemanticSplitter()
 
-            # Split-stat counters (used by task 8.4 for logging)
-            count_semantic_split = 0   # chunks split via SemanticSplitterNodeParser
-            count_sentence_fallback = 0  # chunks split via SentenceSplitter fallback
-            count_passthrough = 0      # chunks passed through unchanged
+            count_semantic_split = 0
+            count_passthrough = 0
 
             semantic_chunks_data: list[dict] = []
-            chunk_index = 0  # globally sequential 0-based index across all output chunks
+            chunk_index = 0
 
             for source_chunk in phase5_chunks:
                 if source_chunk.token_count > settings.semantic_max_chunk_tokens:
-                    # Chunk exceeds the token threshold — split it
-                    sub_texts = splitter.split(
-                        source_chunk.text,
-                        source_chunk.section,
-                        source_chunk.chunk_index,
+                    # Chunk exceeds the token threshold — split with SentenceSplitter
+                    splitter = SentenceSplitter(
+                        chunk_size=settings.semantic_max_chunk_tokens,
+                        chunk_overlap=64,
                     )
+                    doc = LlamaDocument(text=source_chunk.text)
+                    nodes = splitter.get_nodes_from_documents([doc])
+                    sub_texts = [n.get_content() for n in nodes if n.get_content().strip()]
+                    if not sub_texts:
+                        sub_texts = [source_chunk.text]
                     if len(sub_texts) > 1:
-                        # Track as semantic split (exact strategy refined in 8.4)
                         count_semantic_split += 1
                     else:
-                        # Splitter returned a single fragment (edge case)
                         count_passthrough += 1
                 else:
                     # Chunk is within the token limit — pass through unchanged
@@ -148,14 +128,8 @@ class SemanticChunkingService:
                 for text_fragment in sub_texts:
                     token_count = len(enc.encode(text_fragment))
 
-                    # Assign chunk_type per requirements 2.5:
-                    #   "requirement" if 300 ≤ tokens ≤ 600
-                    #   "workflow"    if tokens > 600
-                    #   "requirement" for everything else (< 300)
-                    if token_count > 600:
-                        chunk_type = "workflow"
-                    else:
-                        chunk_type = "requirement"
+                    # All chunks are requirements — no workflow type
+                    chunk_type = "requirement"
 
                     semantic_chunks_data.append(
                         {
@@ -163,26 +137,19 @@ class SemanticChunkingService:
                             "text": text_fragment,
                             "token_count": token_count,
                             "chunk_type": chunk_type,
-                            # Inherited from source Phase5Chunk (requirements 2.6)
                             "section": source_chunk.section,
                             "subsection": source_chunk.subsection,
                             "page_number": source_chunk.page_number,
-                            # Lineage (requirement 2.7)
                             "source_chunk_id": source_chunk.id,
-                            # Will be populated by task 8.3 (classification)
                             "category": "",
                             "confidence_score": 0.0,
-                            # Document / project context for ORM insertion (task 8.3)
                             "document_id": doc_uuid,
                             "project_id": uuid.UUID(project_id),
                         }
                     )
                     chunk_index += 1
 
-            # ── 8.3: Classification and DB insertion ─────────────────
-
-            # Write pre-classification snapshot (raw split data, before any
-            # category/confidence values are populated)
+            # Write pre-classification snapshot
             DebugWriter().write_semantic(
                 semantic_chunks_data, str(project_id), str(doc_uuid)
             )
@@ -220,23 +187,20 @@ class SemanticChunkingService:
             self.db.add_all(orm_rows)
             self.db.commit()
 
-            # Write post-classification snapshot (with category + confidence)
+            # Write post-classification snapshot
             DebugWriter().write_classified(
                 semantic_chunks_data, str(project_id), str(doc_uuid)
             )
-
-            # ── 8.4: Logging, status finalisation ────────────────────
 
             total_input = len(phase5_chunks)
             total_output = len(semantic_chunks_data)
 
             logger.info(
                 "SemanticChunkingService: split stats — "
-                "input=%d output=%d semantic=%d sentence_fallback=%d passthrough=%d",
+                "input=%d output=%d split=%d passthrough=%d",
                 total_input,
                 total_output,
                 count_semantic_split,
-                count_sentence_fallback,
                 count_passthrough,
             )
 
@@ -266,7 +230,6 @@ class SemanticChunkingService:
             )
 
         except Exception as exc:
-            # Roll back any partial DB writes from the pipeline.
             self.db.rollback()
             error_msg = str(exc)[:2000]
             logger.error(
@@ -274,7 +237,6 @@ class SemanticChunkingService:
                 document_id,
                 error_msg,
             )
-            # Best-effort status update — if this commit also fails, log and move on.
             try:
                 document.upload_status = "semantic_chunking_failed"
                 self.db.commit()
@@ -286,9 +248,6 @@ class SemanticChunkingService:
                     document_id,
                     commit_exc,
                 )
-            # Do NOT re-raise — the Celery task handles retries at its own level.
-
-    # ── Private helpers ───────────────────────────────────────────
 
     def _load_document(self, document_id: str) -> Document | None:
         """Fetch the Document row by UUID string."""

@@ -26,6 +26,7 @@ from app.api.routes.documents import router as documents_router, router_projects
 from app.api.routes.projects import router as projects_router  # Project CRUD
 from app.api.routes.semantic_chunks import router as semantic_chunks_router  # Phase 6
 from app.api.routes.retrieval import router as retrieval_router  # Phase 9
+from app.api.routes.requirements import router as requirements_router  # Extraction
 from app.core.config import settings
 from app.core.database import Base, engine
 
@@ -94,6 +95,7 @@ app.include_router(projects_router)          # POST /projects, GET /projects, GE
 app.include_router(projects_status_router)   # GET /projects/{project_id}/status
 app.include_router(semantic_chunks_router)   # GET /documents/{document_id}/semantic-chunks
 app.include_router(retrieval_router)         # POST /search, /search/category, /search/similar
+app.include_router(requirements_router)      # GET /documents/{id}/requirements, /projects/{id}/requirements
 
 
 # ─────────────────────────────────────────────

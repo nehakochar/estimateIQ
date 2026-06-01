@@ -1,11 +1,5 @@
 """
 retrieval.py — Pydantic schemas for retrieval API requests and responses.
-
-Defines request/response shapes for:
-  - Semantic search
-  - Category search
-  - Similar chunk search
-  - Project statistics
 """
 
 from __future__ import annotations
@@ -17,85 +11,25 @@ from pydantic import BaseModel, Field
 
 
 class SemanticSearchRequest(BaseModel):
-    """Request schema for semantic search."""
-
-    query: str = Field(
-        ...,
-        min_length=1,
-        max_length=1000,
-        description="Search query text",
-    )
-    top_k: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="Number of results to return",
-    )
-    category: str | None = Field(
-        default=None,
-        description="Optional category filter (one of 11 valid categories)",
-    )
-    section: str | None = Field(
-        default=None,
-        description="Optional section heading filter",
-    )
-    document_id: str | None = Field(
-        default=None,
-        description="Optional document UUID filter",
-    )
-    chunk_type: str | None = Field(
-        default=None,
-        description="Optional chunk type filter ('requirement' or 'workflow')",
-    )
-    similarity_threshold: float = Field(
-        default=0.65,
-        ge=0.0,
-        le=1.0,
-        description="Minimum similarity score to include (0.0-1.0)",
-    )
+    query: str = Field(..., min_length=1, max_length=1000, description="Search query text")
+    top_k: int = Field(default=10, ge=1, le=100, description="Number of results to return")
+    category: str | None = Field(default=None, description="Optional category filter")
+    section: str | None = Field(default=None, description="Optional section heading filter")
+    document_id: str | None = Field(default=None, description="Optional document UUID filter")
+    chunk_type: str | None = Field(default=None, description="Optional chunk type filter")
+    similarity_threshold: float = Field(default=0.65, ge=0.0, le=1.0, description="Minimum similarity score")
 
 
 class CategorySearchRequest(BaseModel):
-    """Request schema for category-based search."""
-
-    category: str = Field(
-        ...,
-        min_length=1,
-        description="Category to retrieve (one of 11 valid categories)",
-    )
-    top_k: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="Number of results to return",
-    )
-    similarity_threshold: float = Field(
-        default=0.65,
-        ge=0.0,
-        le=1.0,
-        description="Minimum confidence score to include (0.0-1.0)",
-    )
+    category: str = Field(..., min_length=1, description="Category to retrieve")
+    top_k: int = Field(default=10, ge=1, le=100, description="Number of results to return")
+    similarity_threshold: float = Field(default=0.65, ge=0.0, le=1.0, description="Minimum confidence score")
 
 
 class SimilarChunksRequest(BaseModel):
-    """Request schema for finding similar chunks."""
-
-    chunk_id: str = Field(
-        ...,
-        description="UUID of the reference chunk",
-    )
-    top_k: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="Number of similar chunks to return",
-    )
-    similarity_threshold: float = Field(
-        default=0.65,
-        ge=0.0,
-        le=1.0,
-        description="Minimum similarity score to include (0.0-1.0)",
-    )
+    chunk_id: str = Field(..., description="UUID of the reference chunk")
+    top_k: int = Field(default=10, ge=1, le=100, description="Number of similar chunks to return")
+    similarity_threshold: float = Field(default=0.65, ge=0.0, le=1.0, description="Minimum similarity score")
 
 
 # ── Response schemas ──────────────────────────────────────────────────────
@@ -106,6 +40,10 @@ class RetrievalResultItem(BaseModel):
 
     chunk_id: str = Field(description="UUID of the chunk")
     text: str = Field(description="Full chunk text")
+    title: str = Field(default="", description="First line of the chunk — used as display title")
+    description: str = Field(default="", description="Remaining chunk text after the title")
+    req_id: str = Field(default="", description="Sequential requirement ID e.g. FR-01")
+    type_label: str = Field(default="Functional", description="Human-readable category label")
     category: str = Field(description="Classification category")
     section: str = Field(description="Section heading")
     subsection: str = Field(description="Subsection heading")
@@ -113,60 +51,41 @@ class RetrievalResultItem(BaseModel):
     score: float = Field(description="Similarity score (0.0-1.0)")
     confidence_score: float = Field(description="Classification confidence (0.0-1.0)")
     document_id: str = Field(description="UUID of source document")
-    chunk_type: str = Field(description="Chunk type ('requirement' or 'workflow')")
+    chunk_type: str = Field(description="Chunk type")
 
 
 class SemanticSearchResponse(BaseModel):
-    """Response schema for semantic search."""
-
-    project_id: str = Field(description="UUID of the project")
-    query: str = Field(description="Original search query")
-    total_results: int = Field(description="Number of results returned")
-    results: list[RetrievalResultItem] = Field(description="List of matching chunks")
+    project_id: str
+    query: str
+    total_results: int
+    results: list[RetrievalResultItem]
 
 
 class CategorySearchResponse(BaseModel):
-    """Response schema for category search."""
-
-    project_id: str = Field(description="UUID of the project")
-    category: str = Field(description="Category searched")
-    total_results: int = Field(description="Number of results returned")
-    results: list[RetrievalResultItem] = Field(description="List of chunks in category")
+    project_id: str
+    category: str
+    total_results: int
+    results: list[RetrievalResultItem]
 
 
 class SimilarChunksResponse(BaseModel):
-    """Response schema for similar chunks search."""
-
-    project_id: str = Field(description="UUID of the project")
-    reference_chunk_id: str = Field(description="UUID of the reference chunk")
-    total_results: int = Field(description="Number of similar chunks returned")
-    results: list[RetrievalResultItem] = Field(description="List of similar chunks")
+    project_id: str
+    reference_chunk_id: str
+    total_results: int
+    results: list[RetrievalResultItem]
 
 
 # ── Statistics schemas ────────────────────────────────────────────────────
 
 
 class ProjectStatistics(BaseModel):
-    """Project-level retrieval statistics."""
-
-    project_id: str = Field(description="UUID of the project")
-    total_chunks: int = Field(description="Total number of chunks in project")
-    chunks_by_category: dict[str, int] = Field(
-        description="Number of chunks per category"
-    )
-    chunks_by_document: dict[str, int] = Field(
-        description="Number of chunks per document"
-    )
-    chunks_by_type: dict[str, int] = Field(
-        description="Number of chunks per type"
-    )
-
-
-# ── Error response schemas ────────────────────────────────────────────────
+    project_id: str
+    total_chunks: int
+    chunks_by_category: dict[str, int]
+    chunks_by_document: dict[str, int]
+    chunks_by_type: dict[str, int]
 
 
 class ErrorResponse(BaseModel):
-    """Standard error response."""
-
-    error: str = Field(description="Error message")
-    detail: str | None = Field(default=None, description="Additional error details")
+    error: str
+    detail: str | None = None

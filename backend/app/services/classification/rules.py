@@ -47,7 +47,13 @@ CATEGORY_RULES: dict[str, list[str]] = {
         "out of scope", "not in scope", "excluded", "future phase",
         "not included", "descoped",
     ],
-    "functional": [],  # default — no keywords needed
+    "functional": [
+        "shall", "must", "should", "system", "user", "manage", "track",
+        "support", "provide", "allow", "enable", "process", "generate",
+        "display", "store", "retrieve", "create", "update", "delete",
+        "search", "filter", "export", "import", "notify", "send", "receive",
+        "validate", "submit", "approve", "reject", "assign", "schedule",
+    ],
 }
 
 # Tie-break order: earlier position = higher priority

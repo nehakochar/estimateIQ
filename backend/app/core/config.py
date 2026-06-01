@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     embedding_collection_name: str = "rfp_chunks"
     embedding_debug_output_root: str = "storage/debug/embeddings"
 
+    # Extraction (LLM-based requirement extractor)
+    extraction_provider: str = "gemini"   # gemini | groq | anthropic
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
+    anthropic_api_key: str = ""
+
     @field_validator(
         "upload_max_files",
         "upload_max_total_mb",

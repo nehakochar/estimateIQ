@@ -8,7 +8,7 @@ Endpoints:
   GET /projects/{project_id}/statistics — project retrieval statistics
 
 All endpoints are project-scoped — every query filters by project_id.
-Frontend should NEVER query Qdrant directly; all retrieval goes through these APIs.
+Results include req_id (FR-01, FR-02, ...) and type_label (human-readable category).
 """
 
 import logging
@@ -30,6 +30,22 @@ from app.schemas.retrieval import (
 from app.services.retrieval.retrieval_service import RetrievalService
 from app.services.search.search_utils import format_result_for_display
 
+# Human-readable labels for each category
+CATEGORY_LABELS: dict[str, str] = {
+    "functional": "Functional",
+    "non_functional": "Non-Functional",
+    "ui_ux": "UI/UX",
+    "integrations": "Integration",
+    "security_compliance": "Security",
+    "data_validation": "Data Validation",
+    "workflow_roles": "Workflow & Roles",
+    "infrastructure_deployment": "Infrastructure",
+    "risks_assumptions_dependencies": "Risks & Assumptions",
+    "open_questions": "Open Questions",
+    "out_of_scope": "Out of Scope",
+    "other": "Other",
+}
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["Retrieval"])
@@ -48,6 +64,24 @@ VALID_CATEGORIES = {
     "open_questions",
     "out_of_scope",
 }
+
+
+def _enrich_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Add req_id (FR-01, FR-02, ...) and type_label to each result.
+
+    req_id is generated sequentially based on position in the result list.
+    type_label is the human-readable version of the category field.
+    """
+    enriched = []
+    for i, result in enumerate(results, start=1):
+        enriched_result = dict(result)
+        enriched_result["req_id"] = f"FR-{i:02d}"
+        enriched_result["type_label"] = CATEGORY_LABELS.get(
+            result.get("category", ""), "Functional"
+        )
+        enriched.append(enriched_result)
+    return enriched
 
 
 @router.post(
@@ -114,12 +148,13 @@ def semantic_search(
         from app.services.search.search_utils import deduplicate_results
         deduplicated_results = deduplicate_results(results, key="chunk_id")
         formatted_results = [format_result_for_display(r) for r in deduplicated_results]
+        enriched_results = _enrich_results(formatted_results)
 
         return SemanticSearchResponse(
             project_id=project_id,
             query=request.query,
-            total_results=len(formatted_results),
-            results=formatted_results,
+            total_results=len(enriched_results),
+            results=enriched_results,
         )
 
     except ValueError as e:
@@ -192,12 +227,13 @@ def search_by_category(
         from app.services.search.search_utils import deduplicate_results
         deduplicated_results = deduplicate_results(results, key="chunk_id")
         formatted_results = [format_result_for_display(r) for r in deduplicated_results]
+        enriched_results = _enrich_results(formatted_results)
 
         return CategorySearchResponse(
             project_id=project_id,
             category=request.category,
-            total_results=len(formatted_results),
-            results=formatted_results,
+            total_results=len(enriched_results),
+            results=enriched_results,
         )
 
     except ValueError as e:
@@ -263,12 +299,13 @@ def find_similar_chunks(
         from app.services.search.search_utils import deduplicate_results
         deduplicated_results = deduplicate_results(results, key="chunk_id")
         formatted_results = [format_result_for_display(r) for r in deduplicated_results]
+        enriched_results = _enrich_results(formatted_results)
 
         return SimilarChunksResponse(
             project_id=project_id,
             reference_chunk_id=request.chunk_id,
-            total_results=len(formatted_results),
-            results=formatted_results,
+            total_results=len(enriched_results),
+            results=enriched_results,
         )
 
     except ValueError as e:

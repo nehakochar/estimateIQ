@@ -203,6 +203,14 @@ class ProcessingService:
             project_id=str(document.project_id),
         )
 
+        # Dispatch LLM extraction in parallel with chunking.
+        # Import here to avoid circular imports at module load time.
+        from app.tasks.extraction_tasks import extract_requirements_task
+        extract_requirements_task.delay(
+            document_id=str(document.id),
+            project_id=str(document.project_id),
+        )
+
     def _mark_failed(
         self,
         job: ProcessingJob,
