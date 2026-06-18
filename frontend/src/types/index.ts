@@ -30,7 +30,9 @@ export type DocumentStatus =
   | "classified"
   | "embedding"
   | "embedded"
-  | "failed";
+  | "extracted"
+  | "failed"
+  | "extraction_failed";
 
 export type DocumentType = "pdf" | "docx" | "xlsx";
 
@@ -80,6 +82,7 @@ export interface DocumentStatusResponse {
   file_size_bytes: number;
   current_status: DocumentStatus;
   status_message: string;
+  extraction_error: string | null;
   is_ready: boolean;
   pipeline: PipelineStage[];
   created_at: string;

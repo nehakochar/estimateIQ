@@ -46,8 +46,9 @@ const initialState: UploadState = {
 // ─── Async thunk ──────────────────────────────────────────────────────────────
 
 export interface UploadPayload {
-  projectName: string;
   files: File[];
+  projectName?: string;
+  projectId?: string;
 }
 
 export const uploadDocuments = createAsyncThunk<
@@ -56,9 +57,11 @@ export const uploadDocuments = createAsyncThunk<
   { rejectValue: string }
 >(
   "upload/uploadDocuments",
-  async ({ projectName, files }, { dispatch, rejectWithValue }) => {
+  async ({ projectName, projectId, files }, { dispatch, rejectWithValue }) => {
     const form = new FormData();
-    if (projectName?.trim()) {
+    if (projectId?.trim()) {
+      form.append("project_id", projectId.trim());
+    } else if (projectName?.trim()) {
       form.append("project_name", projectName.trim());
     }
     files.forEach((file) => form.append("files", file));

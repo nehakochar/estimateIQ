@@ -5,7 +5,6 @@ import uploadReducer from "./slices/uploadSlice";
 import workspaceReducer from "./slices/workspaceSlice";
 import { documentsApi } from "@/services/documentsApi";
 import { jobsApi } from "@/services/jobsApi";
-import { retrievalApi } from "@/services/retrievalApi";
 import { projectsApi } from "@/services/projectsApi";
 import { extractionApi } from "@/services/extractionApi";
 
@@ -16,7 +15,6 @@ export const store = configureStore({
     workspace: workspaceReducer,
     [documentsApi.reducerPath]: documentsApi.reducer,
     [jobsApi.reducerPath]: jobsApi.reducer,
-    [retrievalApi.reducerPath]: retrievalApi.reducer,
     [projectsApi.reducerPath]: projectsApi.reducer,
     [extractionApi.reducerPath]: extractionApi.reducer,
   },
@@ -29,7 +27,6 @@ export const store = configureStore({
     }).concat(
       documentsApi.middleware,
       jobsApi.middleware,
-      retrievalApi.middleware,
       projectsApi.middleware,
       extractionApi.middleware,
     ),

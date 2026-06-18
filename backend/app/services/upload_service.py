@@ -176,6 +176,7 @@ class UploadService:
         files: list[UploadFile],
         contents: list[bytes],
         project_name: str = "",
+        project_id: str | None = None,
     ) -> UploadResponse:
         """
         Run the full upload pipeline and return a structured response.
@@ -212,22 +213,39 @@ class UploadService:
                 status_code=400, detail="; ".join(size_errors)[:500]
             )
 
-        # ── Step 4: Insert Project row ────────────────────────────
-        # Use provided name, or fall back to first filename stem
-        if not project_name and files:
-            first_name = files[0].filename or ""
-            project_name = first_name.rsplit(".", 1)[0] if "." in first_name else first_name
-        project = Project(name=project_name, client_name=None)
-        try:
-            self.db.add(project)
-            self.db.commit()
-            self.db.refresh(project)
-        except Exception as exc:
-            self.db.rollback()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create project record: {exc}"[:500],
-            ) from exc
+        # ── Step 4: Resolve or Insert Project row ─────────────────
+        project = None
+        if project_id:
+            try:
+                proj_uuid = uuid.UUID(project_id)
+                project = self.db.get(Project, proj_uuid)
+                if not project:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Project '{project_id}' not found."
+                    )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid project_id UUID format: '{project_id}'"
+                ) from exc
+
+        if not project:
+            # Use provided name, or fall back to first filename stem
+            if not project_name and files:
+                first_name = files[0].filename or ""
+                project_name = first_name.rsplit(".", 1)[0] if "." in first_name else first_name
+            project = Project(name=project_name, client_name=None)
+            try:
+                self.db.add(project)
+                self.db.commit()
+                self.db.refresh(project)
+            except Exception as exc:
+                self.db.rollback()
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create project record: {exc}"[:500],
+                ) from exc
 
         # ── Step 5: Create project storage directory ──────────────
         project_id_str = str(project.id)

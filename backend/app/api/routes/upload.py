@@ -32,8 +32,14 @@ router = APIRouter(prefix="/upload", tags=["Upload"])
 async def upload_rfp(
     files: list[UploadFile] = File(..., description="One or more RFP files to upload"),
     project_name: str = Form(default="", description="Optional name for this upload batch"),
+    project_id: str = Form(default="", description="Optional existing project UUID"),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
     contents: list[bytes] = [await f.read() for f in files]
     service = UploadService(db=db)
-    return service.process_upload(files=files, contents=contents, project_name=project_name.strip())
+    return service.process_upload(
+        files=files,
+        contents=contents,
+        project_name=project_name.strip(),
+        project_id=project_id.strip() if project_id else None,
+    )

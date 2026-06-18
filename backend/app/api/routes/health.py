@@ -17,8 +17,8 @@ Endpoints:
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from qdrant_client import QdrantClient
-from qdrant_client.http.exceptions import UnexpectedResponse
+# from qdrant_client import QdrantClient
+# from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -77,43 +77,36 @@ def health_db(db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────
 # 3. QDRANT HEALTH — Can we reach the vector DB?
 # ─────────────────────────────────────────────
-@router.get(
-    "/qdrant",
-    summary="Qdrant Health Check",
-    description="Connects to Qdrant and lists collections to verify the vector DB is reachable.",
-)
-def health_qdrant():
-    """
-    Creates a fresh Qdrant client and calls get_collections().
-    This confirms both network connectivity and API key validity.
-    The client is created per-request here (not shared) because Qdrant
-    connections are lightweight and we don't need a persistent pool for health checks.
-    """
-    try:
-        client = QdrantClient(
-            host="qdrant",                    # Docker service name from docker-compose.yml
-            port=settings.qdrant_port_http,   # default 6333
-            api_key=settings.qdrant_api_key,  # from .env
-            https=False,                      # no TLS inside Docker network
-        )
-        collections = client.get_collections()
-        return {
-            "status": "ok",
-            "database": "qdrant",
-            "collections_count": len(collections.collections),
-        }
-    except UnexpectedResponse as e:
-        # Qdrant raises UnexpectedResponse for auth failures (wrong API key)
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "status": "error",
-                "database": "qdrant",
-                "error": f"Auth error {e.status_code}: {e.reason_phrase}",
-            },
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=503,
-            detail={"status": "error", "database": "qdrant", "error": str(e)},
-        )
+# @router.get(
+#     "/qdrant",
+#     summary="Qdrant Health Check",
+#     description="Connects to Qdrant and lists collections to verify the vector DB is reachable.",
+# )
+# def health_qdrant():
+#     try:
+#         client = QdrantClient(
+#             host="qdrant",
+#             port=settings.qdrant_port_http,
+#             api_key=settings.qdrant_api_key,
+#             https=False,
+#         )
+#         collections = client.get_collections()
+#         return {
+#             "status": "ok",
+#             "database": "qdrant",
+#             "collections_count": len(collections.collections),
+#         }
+#     except UnexpectedResponse as e:
+#         raise HTTPException(
+#             status_code=503,
+#             detail={
+#                 "status": "error",
+#                 "database": "qdrant",
+#                 "error": f"Auth error {e.status_code}: {e.reason_phrase}",
+#             },
+#         )
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=503,
+#             detail={"status": "error", "database": "qdrant", "error": str(e)},
+#         )

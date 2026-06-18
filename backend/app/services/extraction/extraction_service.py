@@ -1,23 +1,15 @@
 """
-extraction_service.py — LLM-powered requirement extraction service.
+extraction_service.py
 
-Architecture decision:
-    This service runs INSTEAD of the chunking → semantic chunking → classification
-    pipeline for the "extraction" flow.  The existing chunking pipeline remains
-    completely untouched and still runs for embedding / RAG retrieval.
+Reads the raw file from disk → extracts all text in one pass →
+sends full text to LLM in a single call → parses JSON response →
+inserts rows into extracted_requirements table.
 
-    This service adds a PARALLEL fast path:
-        parse (existing) → ExtractionService.run() → extracted_requirements table
+No chunks. No embeddings. No RAG. No Qdrant. No pipeline dependencies.
 
-    Flow triggered by:
-        extraction_tasks.extract_requirements_task.delay(document_id, project_id)
-
-    Provider strategy (configured via EXTRACTION_PROVIDER in .env):
-        "gemini"   — Google Gemini 2.0 Flash (free: 1500 req/day, 1M context)
-        "groq"     — Groq llama-3.3-70b (free: 14400 req/day)
-        "anthropic" — Claude Sonnet (paid, highest quality)
-
-    All providers use the same system prompt and return the same JSON schema.
+Provider (EXTRACTION_PROVIDER in .env):
+    gemini    — Gemini 2.5 Flash  (free, 1M ctx, 1500 req/day)  ← default
+    groq      — llama-3.3-70b     (free, 128K ctx, 14400 req/day)
 """
 
 from __future__ import annotations
@@ -27,7 +19,6 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -37,512 +28,345 @@ from app.models.extracted_requirement import ExtractedRequirement
 
 logger = logging.getLogger(__name__)
 
-# ── Requirement type → ID prefix mapping ────────────────────────────────────
 _TYPE_PREFIX: dict[str, str] = {
-    "Functional": "FR",
-    "Non-Functional": "NFR",
-    "Technical": "TR",
-    "Security": "SEC",
-    "Integration": "INT",
-    "Compliance": "CMP",
-    "Infrastructure": "INF",
-    "Support": "SUP",
+    "Functional":      "FR",
+    "Non-Functional":  "NFR",
+    "Technical":       "TR",
+    "Security":        "SEC",
+    "Integration":     "INT",
+    "Compliance":      "CMP",
+    "Infrastructure":  "INF",
+    "Support":         "SUP",
 }
 
-# ── Extraction system prompt (shared across all providers) ───────────────────
-_SYSTEM_PROMPT = """You are a requirements analyst specialising in extracting structured software \
-requirements from RFP (Request for Proposal) documents.
+_SYSTEM_PROMPT = """You are a requirements analyst. Extract every distinct software requirement from this RFP document.
 
-Your task: extract every distinct requirement from the provided document and return them \
-as a JSON array.
+Return ONLY a valid JSON array. No explanation. No markdown fences. No prose. Just the raw JSON array.
 
-EXTRACTION RULES:
-- Extract EVERY specific, actionable requirement — functional, non-functional, technical, \
-security, integration, compliance, infrastructure, support.
-- Each requirement must be a single self-contained statement.
-- Do NOT extract: section titles, company background, evaluation criteria weights, \
-pricing instructions, glossary entries, or submission format instructions.
-- A requirement is something the SYSTEM or VENDOR must DO or SUPPORT — identifiable by \
-modal verbs: must, shall, should, support, provide, enable, implement, ensure, handle, \
-track, manage, integrate, maintain, allow, restrict, generate, notify.
-- Merge related bullet points under the same feature into ONE requirement when they \
-describe the same capability.
-- For tables: extract each row as a separate requirement with full context from the \
-header row.
-- Keep descriptions concise but complete (2-4 sentences). Never truncate mid-sentence.
+Each item must have exactly these fields:
+{
+  "name": "2-5 word label e.g. Role-Based Access Control",
+  "req_type": "one of: Functional | Non-Functional | Technical | Security | Integration | Compliance | Infrastructure | Support",
+  "description": "2-4 complete sentences describing exactly what is required",
+  "priority": "one of: Must Have | Should Have | Nice to Have | Not Specified",
+  "section": "the section heading this requirement appears under in the document",
+  "page_number": integer (0 if unknown),
+  "confidence": float 0.0-1.0 (1.0=explicitly stated, 0.8=clearly implied, 0.6=inferred)
+}
 
-OUTPUT SCHEMA (return ONLY a valid JSON array, no prose, no markdown fences):
-[
-  {
-    "name": "<2-5 word label, e.g. JWT Token Management>",
-    "req_type": "<exactly one of: Functional | Non-Functional | Technical | Security | Integration | Compliance | Infrastructure | Support>",
-    "description": "<complete 2-4 sentence description>",
-    "priority": "<exactly one of: Must Have | Should Have | Nice to Have | Not Specified>",
-    "section": "<source section heading from document>",
-    "page_number": <integer, 0 if unknown>,
-    "confidence": <float 0.0-1.0: 1.0=explicit, 0.8=implied, 0.6=inferred>
-  }
-]
+What counts as a requirement: anything the system or vendor MUST, SHALL, SHOULD, or NEEDS TO do or support.
+What to skip: company background text, section headings alone, glossary entries, evaluation scoring weights, submission format instructions, pricing table headers.
 
-If no requirements are found, return [].
+Return [] if no requirements are found.
 """
 
 
-# ── Table-aware PDF page extractor ──────────────────────────────────────────
+# ── Text extraction ───────────────────────────────────────────────────────────
 
-def _extract_pages_pdf(file_path: Path) -> list[dict]:
-    """
-    Extract pages from PDF using pdfplumber with table-aware handling.
-    Tables are serialised as '| col1 | col2 |' rows, not raw merged text.
-    Returns list of {page: int, text: str}.
-    """
-    try:
-        import pdfplumber  # optional dep — only needed for PDF extraction path
-    except ImportError:
-        raise RuntimeError(
-            "pdfplumber is required for PDF extraction. "
-            "Add 'pdfplumber==0.11.4' to requirements.txt."
-        )
-
-    pages: list[dict] = []
-    with pdfplumber.open(file_path) as pdf:
+def _read_pdf(path: Path) -> str:
+    import pdfplumber
+    pages: list[str] = []
+    with pdfplumber.open(path) as pdf:
         for i, page in enumerate(pdf.pages):
             tables = page.find_tables()
-            table_bboxes = [t.bbox for t in tables]
+            bboxes = [t.bbox for t in tables]
 
-            # Serialise tables as labelled rows
-            table_blocks: list[str] = []
-            for table in tables:
-                rows = table.extract()
-                if not rows:
-                    continue
-                serialised_rows = []
-                for row in rows:
+            table_lines: list[str] = []
+            for t in tables:
+                for row in (t.extract() or []):
                     cells = [str(c).strip() if c else "" for c in row]
                     non_empty = [c for c in cells if c]
                     if non_empty:
-                        serialised_rows.append(" | ".join(non_empty))
-                if serialised_rows:
-                    table_blocks.append("\n".join(serialised_rows))
+                        table_lines.append(" | ".join(non_empty))
 
-            # Extract prose that falls outside table bounding boxes
-            words = page.extract_words()
             prose_words: list[str] = []
-            for word in words:
-                wx0, wy0, wx1, wy1 = (
-                    word["x0"], word["top"], word["x1"], word["bottom"]
-                )
+            for w in page.extract_words():
                 in_table = any(
-                    bx0 - 2 <= wx0
-                    and wy0 >= by0 - 2
-                    and wx1 <= bx1 + 2
-                    and wy1 <= by1 + 2
-                    for bx0, by0, bx1, by1 in table_bboxes
+                    bx0 - 2 <= w["x0"] and w["top"] >= by0 - 2
+                    and w["x1"] <= bx1 + 2 and w["bottom"] <= by1 + 2
+                    for bx0, by0, bx1, by1 in bboxes
                 )
                 if not in_table:
-                    prose_words.append(word["text"])
+                    prose_words.append(w["text"])
 
-            prose = " ".join(prose_words)
-            full_text = prose
-            if table_blocks:
-                full_text += "\n\n[TABLE]\n" + "\n\n[TABLE]\n".join(table_blocks)
+            text = " ".join(prose_words)
+            if table_lines:
+                text += "\n\n" + "\n".join(table_lines)
+            if text.strip():
+                pages.append(f"[Page {i+1}]\n{text.strip()}")
 
-            if full_text.strip():
-                pages.append({"page": i + 1, "text": full_text.strip()})
-
-    return pages
+    return "\n\n".join(pages)
 
 
-def _extract_pages_from_parsed_content(parsed_content: list[dict]) -> list[dict]:
-    """
-    Convert already-parsed document content (stored in Document.parsed_content)
-    into the page-list format expected by the extractor.
-
-    parsed_content is a list of ParsedPage.to_dict() outputs:
-        {"page_number": int, "text": str, "metadata": {...}}
-    """
-    pages: list[dict] = []
-    for page_dict in parsed_content:
-        text = page_dict.get("text", "").strip()
-        if text:
-            pages.append({
-                "page": page_dict.get("page_number", 0),
-                "text": text,
-            })
-    return pages
+def _read_docx(path: Path) -> str:
+    from docx import Document as DocxDoc
+    doc = DocxDoc(path)
+    return "\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip())
 
 
-def _build_segments(
-    pages: list[dict],
-    window_size: int = 5,
-    overlap: int = 1,
-) -> list[dict]:
-    """
-    Group pages into overlapping windows so requirements that span page
-    boundaries appear in at least one segment.
-
-    Returns list of {start_page, end_page, text}.
-    """
-    segments: list[dict] = []
-    n = len(pages)
-    step = window_size - overlap
-    i = 0
-    while i < n:
-        window = pages[i: i + window_size]
-        combined = "\n\n---PAGE BREAK---\n\n".join(
-            f"[Page {p['page']}]\n{p['text']}" for p in window
-        )
-        segments.append({
-            "start_page": window[0]["page"],
-            "end_page": window[-1]["page"],
-            "text": combined,
-        })
-        i += step
-    return segments
+def _read_xlsx(path: Path) -> str:
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    sheets: list[str] = []
+    for sheet in wb.worksheets:
+        rows = []
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(c).strip() if c is not None else "" for c in row]
+            non_empty = [c for c in cells if c]
+            if non_empty:
+                rows.append(" | ".join(non_empty))
+        if rows:
+            sheets.append(f"[Sheet: {sheet.title}]\n" + "\n".join(rows))
+    wb.close()
+    return "\n\n".join(sheets)
 
 
-# ── Provider call functions ──────────────────────────────────────────────────
+def _extract_text(path: Path, file_type: str) -> str:
+    ft = file_type.lower().strip(".")
+    if ft == "pdf":
+        return _read_pdf(path)
+    elif ft in ("docx", "doc"):
+        return _read_docx(path)
+    elif ft in ("xlsx", "xls"):
+        return _read_xlsx(path)
+    raise ValueError(f"Unsupported file type: {file_type}")
 
-def _call_gemini(segment_text: str) -> list[dict]:
-    """Call Google Gemini 2.0 Flash. Free: 1500 req/day, 1M token context."""
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise RuntimeError(
-            "google-generativeai is required for Gemini provider. "
-            "Add 'google-generativeai==0.8.3' to requirements.txt."
-        )
 
+# ── LLM calls ─────────────────────────────────────────────────────────────────
+
+def _call_gemini(text: str) -> str:
+    import google.generativeai as genai
+    if not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY not set in .env")
     genai.configure(api_key=settings.gemini_api_key)
     model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=_SYSTEM_PROMPT,
     )
-    response = model.generate_content(
-        f"Extract all requirements from this RFP segment:\n\n{segment_text}"
-    )
-    return _parse_llm_response(response.text)
+    return model.generate_content(
+        f"Extract all requirements from this RFP:\n\n{text}"
+    ).text
 
 
-def _call_groq(segment_text: str) -> list[dict]:
-    """Call Groq llama-3.3-70b-versatile. Free: 14400 req/day."""
-    try:
-        from groq import Groq
-    except ImportError:
-        raise RuntimeError(
-            "groq is required for Groq provider. "
-            "Add 'groq==0.11.0' to requirements.txt."
-        )
-
+def _call_groq(text: str) -> str:
+    from groq import Groq
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY not set in .env")
+    if len(text) > 380_000:
+        logger.warning("ExtractionService: truncating to 380K chars for Groq 128K limit")
+        text = text[:380_000]
     client = Groq(api_key=settings.groq_api_key)
-    response = client.chat.completions.create(
+    resp = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Extract all requirements from this RFP segment "
-                    f"and return ONLY a JSON array:\n\n{segment_text}"
-                ),
-            },
+            {"role": "user", "content": f"Extract all requirements from this RFP:\n\n{text}"},
         ],
-        max_tokens=4096,
+        max_tokens=8000,
         temperature=0.1,
-        response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content
-    # Groq json_object mode may wrap the array in a key
+    return resp.choices[0].message.content
+
+
+def _call_llm(text: str) -> str:
+    provider = settings.extraction_provider.lower()
+    if provider == "gemini":
+        return _call_gemini(text)
+    elif provider == "groq":
+        return _call_groq(text)
+    raise ValueError(f"Unknown EXTRACTION_PROVIDER='{provider}'. Use: gemini | groq")
+
+
+# ── Response parser ───────────────────────────────────────────────────────────
+
+def _parse_json(raw: str) -> list[dict]:
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    raw = raw.strip()
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, list):
             return parsed
-        # Unwrap first list value
-        for v in parsed.values():
-            if isinstance(v, list):
-                return v
+        if isinstance(parsed, dict):
+            for v in parsed.values():
+                if isinstance(v, list):
+                    return v
         return []
     except json.JSONDecodeError:
-        return _parse_llm_response(raw)
-
-
-def _call_anthropic(segment_text: str) -> list[dict]:
-    """Call Claude Sonnet. Paid, highest quality."""
-    try:
-        import anthropic
-    except ImportError:
-        raise RuntimeError(
-            "anthropic is required for Anthropic provider. "
-            "Add 'anthropic==0.40.0' to requirements.txt."
-        )
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        system=_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Extract all requirements from this RFP segment "
-                    f"and return ONLY a JSON array:\n\n{segment_text}"
-                ),
-            }
-        ],
-    )
-    return _parse_llm_response(message.content[0].text)
-
-
-def _parse_llm_response(raw: str) -> list[dict]:
-    """
-    Parse a raw LLM text response into a list of requirement dicts.
-    Handles markdown fences, partial responses, and malformed JSON.
-    """
-    raw = raw.strip()
-    # Strip markdown code fences
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    raw = raw.strip()
-
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, list) else []
-    except json.JSONDecodeError:
-        # Attempt to extract just the JSON array portion
-        match = re.search(r"\[.*\]", raw, re.DOTALL)
-        if match:
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if m:
             try:
-                return json.loads(match.group())
+                return json.loads(m.group())
             except json.JSONDecodeError:
                 pass
-    logger.warning("ExtractionService: failed to parse LLM response as JSON")
+    logger.error("ExtractionService: could not parse LLM response as JSON. First 500 chars: %s", raw[:500])
     return []
 
 
-# ── Deduplicator ─────────────────────────────────────────────────────────────
+# ── Dedup ─────────────────────────────────────────────────────────────────────
 
-def _normalise(text: str) -> str:
-    return re.sub(r"\s+", " ", text.lower().strip())
-
-
-def _deduplicate(raw_reqs: list[dict], threshold: float = 0.82) -> list[dict]:
-    """
-    Remove near-duplicate requirements using token-level Jaccard similarity.
-    O(n²) — acceptable for typical RFP sizes (< 200 requirements).
-    """
+def _deduplicate(reqs: list[dict]) -> list[dict]:
     seen: list[dict] = []
-    for req in raw_reqs:
-        desc = _normalise(req.get("description", ""))
-        new_tokens = set(desc.split())
-        if len(new_tokens) < 4:
+    for req in reqs:
+        tokens = set(req.get("description", "").lower().split())
+        if len(tokens) < 5:
             seen.append(req)
             continue
-        is_dup = False
-        for ex in seen:
-            ex_tokens = set(_normalise(ex.get("description", "")).split())
-            if not ex_tokens:
-                continue
-            jaccard = len(new_tokens & ex_tokens) / len(new_tokens | ex_tokens)
-            if jaccard >= threshold:
-                is_dup = True
-                break
-        if not is_dup:
+        dup = any(
+            len(tokens & set(ex.get("description", "").lower().split())) /
+            max(len(tokens | set(ex.get("description", "").lower().split())), 1) >= 0.85
+            for ex in seen
+        )
+        if not dup:
             seen.append(req)
     return seen
 
 
-# ── Main service class ────────────────────────────────────────────────────────
+# ── Main service ──────────────────────────────────────────────────────────────
 
 class ExtractionService:
     """
-    Extracts structured requirements from a parsed document using an LLM.
-
-    Called by the Celery task extraction_tasks.extract_requirements_task.
-    Uses the document's already-parsed content (Document.parsed_content) so
-    parsing does NOT run twice.
-
-    The extraction provider is selected via settings.extraction_provider:
-        "gemini"    — default (free, 1M context, best for large docs)
-        "groq"      — free alternative
-        "anthropic" — highest quality, paid
-
-    This service does NOT modify any existing tables or services.
-    It only writes to the `extracted_requirements` table.
+    Read file from disk → extract text → single LLM call → save to DB.
+    That is all this does.
     """
 
     def __init__(self, db: Session) -> None:
         self.db = db
 
     def run(self, document_id: str, project_id: str) -> None:
-        """
-        Execute the full extraction pipeline for one document.
-
-        Never raises — all errors are caught and logged.
-        Writes results to the extracted_requirements table.
-
-        Args:
-            document_id: UUID string of the Document row.
-            project_id:  UUID string of the owning Project.
-        """
         logger.info(
-            "ExtractionService.run: document=%s project=%s provider=%s",
-            document_id,
-            project_id,
-            settings.extraction_provider,
+            "ExtractionService.run: document=%s provider=%s",
+            document_id, settings.extraction_provider,
         )
 
-        # ── 1. Load document ─────────────────────────────────────
+        # 1. Validate UUIDs
         try:
             doc_uuid = uuid.UUID(document_id)
             proj_uuid = uuid.UUID(project_id)
         except ValueError:
-            logger.error("ExtractionService: invalid UUID(s): %s / %s", document_id, project_id)
+            logger.error("ExtractionService: invalid UUIDs %s / %s", document_id, project_id)
             return
 
-        document: Document | None = self.db.get(Document, doc_uuid)
-        if document is None:
+        # 2. Load document row
+        document = self.db.get(Document, doc_uuid)
+        if not document:
             logger.error("ExtractionService: document %s not found", document_id)
             return
 
-        if not document.parsed_content:
-            logger.error(
-                "ExtractionService: document %s has no parsed_content — "
-                "ensure parsing completed before extraction",
-                document_id,
-            )
+        # 3. Resolve file path
+        file_path = Path(settings.upload_storage_root) / document.stored_path
+        if not file_path.exists():
+            logger.error("ExtractionService: file not on disk: %s", file_path)
             return
 
-        # ── 2. Mark as extracting ─────────────────────────────────
-        document.upload_status = "extracting"
+        logger.info(
+            "ExtractionService: reading %s (%s, %d bytes)",
+            file_path.name, document.file_type, document.file_size_bytes,
+        )
+
+        # 4. Extract full text from file
         try:
-            self.db.commit()
+            full_text = _extract_text(file_path, document.file_type)
         except Exception as exc:
-            self.db.rollback()
-            logger.error("ExtractionService: failed to mark 'extracting': %s", exc)
+            logger.error("ExtractionService: text extraction failed: %s", exc)
             return
 
-        # ── 3. Build page segments from parsed content ────────────
+        if not full_text.strip():
+            logger.error("ExtractionService: empty text from %s", document_id)
+            return
+
+        logger.info("ExtractionService: %d chars extracted", len(full_text))
+
+        # 5. Single LLM call
         try:
-            pages = _extract_pages_from_parsed_content(document.parsed_content)
-            if not pages:
-                logger.warning(
-                    "ExtractionService: no usable pages extracted from document %s",
-                    document_id,
-                )
-                document.upload_status = "extraction_failed"
-                self.db.commit()
-                return
+            raw = _call_llm(full_text)
+        except Exception as exc:
+            error_msg = str(exc)
+            logger.error("ExtractionService: LLM call failed: %s", error_msg)
+            self._mark_extraction_failed(document, error_msg)
+            return
 
-            segments = _build_segments(pages, window_size=5, overlap=1)
-            logger.info(
-                "ExtractionService: %d pages → %d segments for document=%s",
-                len(pages),
-                len(segments),
-                document_id,
-            )
+        # 6. Parse JSON
+        reqs = _parse_json(raw)
+        if not reqs:
+            logger.warning("ExtractionService: LLM returned 0 requirements for %s", document_id)
+            return
 
-            # ── 4. Call LLM on each segment ───────────────────────
-            provider = settings.extraction_provider.lower()
-            caller = {
-                "gemini": _call_gemini,
-                "groq": _call_groq,
-                "anthropic": _call_anthropic,
-            }.get(provider)
+        logger.info("ExtractionService: %d requirements from LLM", len(reqs))
 
-            if caller is None:
-                raise ValueError(
-                    f"Unknown extraction_provider '{provider}'. "
-                    f"Must be one of: gemini, groq, anthropic."
-                )
+        # 7. Deduplicate
+        reqs = _deduplicate(reqs)
+        logger.info("ExtractionService: %d after dedup", len(reqs))
 
-            all_raw: list[dict] = []
-            for i, seg in enumerate(segments):
-                logger.debug(
-                    "ExtractionService: segment %d/%d pages=%d-%d",
-                    i + 1,
-                    len(segments),
-                    seg["start_page"],
-                    seg["end_page"],
-                )
-                try:
-                    extracted = caller(seg["text"])
-                    # Attach page hint to each extracted requirement
-                    for req in extracted:
-                        if not req.get("page_number"):
-                            req["page_number"] = seg["start_page"]
-                    all_raw.extend(extracted)
-                    logger.debug(
-                        "ExtractionService: segment %d → %d requirements", i + 1, len(extracted)
-                    )
-                except Exception as seg_exc:
-                    logger.warning(
-                        "ExtractionService: segment %d failed (%s) — skipping",
-                        i + 1,
-                        seg_exc,
-                    )
-                    continue
-
-            # ── 5. Deduplicate ────────────────────────────────────
-            unique_raw = _deduplicate(all_raw)
-            logger.info(
-                "ExtractionService: %d raw → %d after dedup for document=%s",
-                len(all_raw),
-                len(unique_raw),
-                document_id,
-            )
-
-            # ── 6. Delete any previous extraction for this document ─
+        # 8. Clear previous extraction for this document
+        try:
             self.db.query(ExtractedRequirement).filter(
                 ExtractedRequirement.document_id == doc_uuid
             ).delete(synchronize_session=False)
-
-            # ── 7. Assign IDs and bulk insert ─────────────────────
-            counters: dict[str, int] = {}
-            orm_rows: list[ExtractedRequirement] = []
-
-            for req in unique_raw:
-                req_type = req.get("req_type", "Functional")
-                prefix = _TYPE_PREFIX.get(req_type, "FR")
-                counters[prefix] = counters.get(prefix, 0) + 1
-                req_id = f"{prefix}-{counters[prefix]:02d}"
-
-                orm_rows.append(
-                    ExtractedRequirement(
-                        document_id=doc_uuid,
-                        project_id=proj_uuid,
-                        req_id=req_id,
-                        name=req.get("name", "Unnamed Requirement")[:255],
-                        req_type=req_type[:64],
-                        description=req.get("description", ""),
-                        priority=req.get("priority", "Not Specified")[:64],
-                        section=req.get("section", "")[:512],
-                        page_number=int(req.get("page_number", 0)),
-                        confidence=float(req.get("confidence", 1.0)),
-                    )
-                )
-
-            self.db.add_all(orm_rows)
-
-            # ── 8. Mark completed ─────────────────────────────────
-            document.upload_status = "extracted"
-            self.db.commit()
-
-            logger.info(
-                "ExtractionService: completed document=%s requirements=%d",
-                document_id,
-                len(orm_rows),
-            )
-
         except Exception as exc:
             self.db.rollback()
-            logger.error(
-                "ExtractionService: pipeline failed for document=%s: %s",
-                document_id,
-                str(exc)[:2000],
+            logger.error("ExtractionService: failed to clear old rows: %s", exc)
+            return
+
+        # 9. Build and insert rows
+        counters: dict[str, int] = {}
+        rows: list[ExtractedRequirement] = []
+
+        for req in reqs:
+            req_type = str(req.get("req_type", "Functional"))
+            prefix = _TYPE_PREFIX.get(req_type, "FR")
+            counters[prefix] = counters.get(prefix, 0) + 1
+            req_id = f"{prefix}-{counters[prefix]:02d}"
+
+            rows.append(ExtractedRequirement(
+                document_id=doc_uuid,
+                project_id=proj_uuid,
+                req_id=req_id,
+                name=str(req.get("name", "Unnamed"))[:255],
+                req_type=req_type[:64],
+                description=str(req.get("description", "")),
+                priority=str(req.get("priority", "Not Specified"))[:64],
+                section=str(req.get("section", ""))[:512],
+                page_number=int(req.get("page_number") or 0),
+                confidence=float(req.get("confidence") or 1.0),
+            ))
+
+        try:
+            self.db.add_all(rows)
+            self.db.commit()
+            logger.info(
+                "ExtractionService: saved %d requirements for document=%s",
+                len(rows), document_id,
             )
-            try:
-                document.upload_status = "extraction_failed"
-                self.db.commit()
-            except Exception:
-                self.db.rollback()
+        except Exception as exc:
+            self.db.rollback()
+            logger.error("ExtractionService: DB insert failed: %s", exc)
+
+    def _mark_extraction_failed(self, document: Document, error_msg: str) -> None:
+        """Persist extraction_failed status and the error message to the document row."""
+        # Classify the error for a cleaner UI message
+        msg = str(error_msg)
+        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+            friendly = (
+                f"LLM quota exceeded ({settings.extraction_provider.upper()}). "
+                "The API key has hit its rate or daily limit. "
+                "Switch EXTRACTION_PROVIDER or use a different API key."
+            )
+        elif "api_key" in msg.lower() or "api key" in msg.lower() or "invalid" in msg.lower():
+            friendly = (
+                f"Invalid API key for {settings.extraction_provider.upper()}. "
+                "Check your key in .env and restart the worker."
+            )
+        elif "timeout" in msg.lower():
+            friendly = "LLM request timed out. The document may be too large. Try again or switch provider."
+        else:
+            friendly = f"LLM extraction failed: {msg[:300]}"
+
+        document.upload_status = "extraction_failed"
+        document.extraction_error = friendly
+        try:
+            self.db.commit()
+        except Exception as exc:
+            self.db.rollback()
+            logger.error("ExtractionService: could not save extraction_failed status: %s", exc)

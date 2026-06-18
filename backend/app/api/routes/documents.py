@@ -1,223 +1,116 @@
 """
-documents.py — Route handlers for /documents endpoints.
+documents.py — Document endpoints.
 
-GET /documents/{document_id}
-  Returns document metadata and parsed content.
-
-GET /documents/{document_id}/status
-  Returns a lightweight pipeline progress view — purpose-built for UI polling.
-  Shows each pipeline stage (uploaded → parsed → chunked → classified → embedded)
-  with its individual status. Does NOT return heavy data like parsed_content.
-
-GET /documents/{document_id}/chunks
-  Returns all hierarchical chunks for a document ordered by chunk_index.
+GET /documents/{document_id}         — document metadata + parsed_content
+GET /documents/{document_id}/status  — pipeline status for UI polling
+GET /projects/{project_id}/status    — status of all documents in a project
 """
 
 import uuid
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.document import Document
-from app.models.document_chunk import DocumentChunk
-from app.schemas.chunking import ChunkResponse, DocumentChunksResponse
+from app.models.project import Project
 from app.schemas.processing import DocumentResponse
 from app.schemas.status import DocumentStatusResponse, PipelineStage, ProjectStatusResponse
-from app.models.project import Project
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
-
-# ── Pipeline stage builder ────────────────────────────────────────────────
-
-# Maps each upload_status value to which stages are complete
-_STAGE_ORDER = ["uploaded", "parsed", "chunked", "classified", "embedded"]
+# Simplified 3-stage pipeline: Upload → Parse → Extract
+_STAGE_ORDER = ["uploaded", "parsed", "extracted"]
 
 _STAGE_LABELS = {
-    "uploaded":   "Upload",
-    "parsed":     "Parse",
-    "chunked":    "Chunk",
-    "classified": "Classify",
-    "embedded":   "Embed",
+    "uploaded":  "Upload",
+    "parsed":    "Parse",
+    "extracted": "Extract",
 }
 
-# Human-readable description for each stage shown below the label
 _STAGE_DESCRIPTIONS = {
-    "uploaded":   "File received and saved securely.",
-    "parsed":     "Extracting text and structure from the document.",
-    "chunked":    "Breaking the document into sections and paragraphs.",
-    "classified": "Identifying requirement types (functional, security, UI/UX, etc.).",
-    "embedded":   "Generating AI vectors so the document can be searched semantically.",
+    "uploaded":  "File received and saved.",
+    "parsed":    "Text extracted from document.",
+    "extracted": "Requirements identified by AI.",
 }
 
-# Human-readable message for the overall current status
 _STATUS_MESSAGES = {
-    "uploaded":   "Document uploaded. Starting processing...",
-    "processing": "Reading and extracting text from the document...",
-    "parsed":     "Text extracted. Breaking document into chunks...",
-    "chunked":    "Chunking complete. Classifying requirements...",
-    "classified": "Requirements classified. Generating search vectors...",
-    "embedding":  "Generating AI search vectors. This may take a few minutes...",
-    "embedded":   "Document is ready. You can now search and query this RFP.",
-    "failed":     "Processing failed. Please try re-uploading the document.",
+    "uploaded":          "Document uploaded. Starting text extraction...",
+    "processing":        "Reading and extracting text from document...",
+    "parsed":            "Text extracted. Running AI requirement extraction...",
+    "extracted":         "Requirements extracted. Ready to view.",
+    "failed":            "Processing failed. Please re-upload the document.",
+    "extraction_failed": "AI extraction failed. Check your LLM API key or switch provider.",
 }
 
-# Maps DB status values to which named stage is currently in progress
-_STATUS_TO_IN_PROGRESS_STAGE = {
-    "uploaded":   None,        # just uploaded, nothing in progress yet
-    "processing": "parsed",    # parsing in progress
-    "parsed":     "chunked",   # chunking in progress
-    "chunked":    "classified", # semantic chunking in progress
-    "classified": "embedded",  # embedding in progress
-    "embedding":  "embedded",  # embedding in progress
-    "embedded":   None,        # all done
-    "failed":     None,        # failed somewhere
+_STATUS_TO_IN_PROGRESS = {
+    "uploaded":          None,
+    "processing":        "parsed",
+    "parsed":            "extracted",
+    "extracted":         None,
+    "failed":            None,
+    "extraction_failed": None,
+}
+
+_STATUS_TO_COMPLETED_UP_TO = {
+    "uploaded":          "uploaded",
+    "processing":        "uploaded",
+    "parsed":            "parsed",
+    "extracted":         "extracted",
+    "failed":            None,
+    "extraction_failed": "parsed",
 }
 
 
-def _build_pipeline(current_status: str) -> list[PipelineStage]:
-    """
-    Build the ordered list of pipeline stages with their individual status.
-
-    Rules:
-    - Stages before the current one are 'completed'
-    - The current active stage is 'in_progress'
-    - Stages after are 'pending'
-    - If status is 'failed', the in-progress stage becomes 'failed'
-    """
-    in_progress_stage = _STATUS_TO_IN_PROGRESS_STAGE.get(current_status)
-    is_failed = current_status == "failed"
-
-    # Determine how far we've gotten
-    # Map DB status to the last completed stage name
-    _STATUS_TO_COMPLETED_UP_TO = {
-        "uploaded":   "uploaded",
-        "processing": "uploaded",
-        "parsed":     "parsed",
-        "chunked":    "chunked",
-        "classified": "classified",
-        "embedding":  "classified",
-        "embedded":   "embedded",
-        "failed":     None,
-    }
-    completed_up_to = _STATUS_TO_COMPLETED_UP_TO.get(current_status)
-    completed_index = (
+def _build_pipeline(status: str) -> list[PipelineStage]:
+    completed_up_to = _STATUS_TO_COMPLETED_UP_TO.get(status)
+    completed_idx = (
         _STAGE_ORDER.index(completed_up_to)
         if completed_up_to and completed_up_to in _STAGE_ORDER
         else -1
     )
+    in_progress = _STATUS_TO_IN_PROGRESS.get(status)
+    is_failed = status in ("failed", "extraction_failed")
 
     stages = []
-    for i, stage_name in enumerate(_STAGE_ORDER):
-        if i <= completed_index:
-            stage_status = "completed"
-        elif stage_name == in_progress_stage:
-            stage_status = "failed" if is_failed else "in_progress"
+    for i, name in enumerate(_STAGE_ORDER):
+        if i <= completed_idx:
+            s = "completed"
+        elif name == in_progress:
+            s = "failed" if is_failed else "in_progress"
+        elif is_failed and name == "extracted" and status == "extraction_failed":
+            s = "failed"
         else:
-            stage_status = "pending"
-
+            s = "pending"
         stages.append(PipelineStage(
-            name=stage_name,
-            label=_STAGE_LABELS[stage_name],
-            description=_STAGE_DESCRIPTIONS[stage_name],
-            status=stage_status,
+            name=name,
+            label=_STAGE_LABELS[name],
+            description=_STAGE_DESCRIPTIONS[name],
+            status=s,
         ))
-
     return stages
 
 
-@router.get(
-    "/{document_id}",
-    response_model=DocumentResponse,
-    summary="Get document details and parsed content",
-    description=(
-        "Returns metadata and parsed text content for a document. "
-        "`parsed_content` is null until parsing completes. "
-        "Each element in `parsed_content` has a `page` number and `text` field."
-    ),
-)
-def get_document(
-    document_id: str,
-    db: Session = Depends(get_db),
-) -> DocumentResponse:
-    """
-    Fetch a Document by its UUID.
-
-    Args:
-        document_id: UUID string of the document.
-        db:          Database session (injected by FastAPI).
-
-    Returns:
-        DocumentResponse with metadata and parsed_content.
-
-    Raises:
-        HTTP 404: if no document with that ID exists.
-        HTTP 400: if document_id is not a valid UUID.
-    """
-    # Validate UUID format
+@router.get("/{document_id}", response_model=DocumentResponse)
+def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentResponse:
     try:
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid document ID format: '{document_id}'. Must be a UUID.",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Invalid document_id: '{document_id}'.")
     document = db.get(Document, doc_uuid)
     if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Document '{document_id}' not found.",
-        )
-
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
     return DocumentResponse.model_validate(document)
 
 
-@router.get(
-    "/{document_id}/status",
-    response_model=DocumentStatusResponse,
-    summary="Get document pipeline status",
-    description=(
-        "Returns a lightweight pipeline progress view for a document. "
-        "Purpose-built for UI polling — shows each stage (Upload, Parse, Chunk, "
-        "Classify, Embed) with its individual status. "
-        "Poll this every few seconds after upload to track progress. "
-        "When `is_ready` is true, the document is fully searchable."
-    ),
-)
-def get_document_status(
-    document_id: str,
-    db: Session = Depends(get_db),
-) -> DocumentStatusResponse:
-    """
-    Get pipeline progress for a document — lightweight, UI-friendly.
-
-    Args:
-        document_id: UUID string of the document.
-        db:          Database session (injected by FastAPI).
-
-    Returns:
-        DocumentStatusResponse with pipeline stages and is_ready flag.
-
-    Raises:
-        HTTP 404: if no document with that ID exists.
-        HTTP 400: if document_id is not a valid UUID.
-    """
+@router.get("/{document_id}/status", response_model=DocumentStatusResponse)
+def get_document_status(document_id: str, db: Session = Depends(get_db)) -> DocumentStatusResponse:
     try:
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid document ID format: '{document_id}'. Must be a UUID.",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Invalid document_id: '{document_id}'.")
     document = db.get(Document, doc_uuid)
     if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Document '{document_id}' not found.",
-        )
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
 
     return DocumentStatusResponse(
         document_id=document.id,
@@ -227,118 +120,25 @@ def get_document_status(
         file_size_bytes=document.file_size_bytes,
         current_status=document.upload_status,
         status_message=_STATUS_MESSAGES.get(document.upload_status, "Processing..."),
-        is_ready=document.upload_status == "embedded",
+        extraction_error=getattr(document, "extraction_error", None),
+        is_ready=document.upload_status == "extracted",
         pipeline=_build_pipeline(document.upload_status),
         created_at=document.created_at,
     )
 
 
-@router.get(
-    "/{document_id}/chunks",
-    response_model=DocumentChunksResponse,
-    summary="Get chunks for a document",
-    description=(
-        "Returns all hierarchical chunks for a document ordered by chunk_index. "
-        "Returns an empty list if the document has not been chunked yet."
-    ),
-)
-def get_document_chunks(
-    document_id: str,
-    db: Session = Depends(get_db),
-) -> DocumentChunksResponse:
-    """
-    Fetch all DocumentChunk rows for a document, ordered by chunk_index.
-
-    Args:
-        document_id: UUID string of the document.
-        db:          Database session (injected by FastAPI).
-
-    Returns:
-        DocumentChunksResponse with document_id, total_chunks, and chunks list.
-
-    Raises:
-        HTTP 400: if document_id is not a valid UUID.
-        HTTP 404: if no document with that ID exists.
-    """
-    # Validate UUID format
-    try:
-        doc_uuid = uuid.UUID(document_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid document ID format: '{document_id}'. Must be a UUID.",
-        )
-
-    # Verify the document exists
-    document = db.get(Document, doc_uuid)
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Document '{document_id}' not found.",
-        )
-
-    # Query all chunks for this document ordered by chunk_index
-    chunks = (
-        db.query(DocumentChunk)
-        .filter(DocumentChunk.document_id == doc_uuid)
-        .order_by(DocumentChunk.chunk_index)
-        .all()
-    )
-
-    return DocumentChunksResponse(
-        document_id=document_id,
-        total_chunks=len(chunks),
-        chunks=[ChunkResponse.model_validate(c) for c in chunks],
-    )
-
-
-# ── Project-level status ──────────────────────────────────────────────────
-
 router_projects = APIRouter(prefix="/projects", tags=["Documents"])
 
 
-@router_projects.get(
-    "/{project_id}/status",
-    response_model=ProjectStatusResponse,
-    summary="Get pipeline status for all documents in a project",
-    description=(
-        "Returns the pipeline status of every document in a project. "
-        "Useful for showing an overall project progress view in the UI. "
-        "`is_ready` is true only when ALL documents are fully embedded and searchable."
-    ),
-)
-def get_project_status(
-    project_id: str,
-    db: Session = Depends(get_db),
-) -> ProjectStatusResponse:
-    """
-    Get pipeline status for all documents in a project.
-
-    Args:
-        project_id: UUID string of the project.
-        db:         Database session (injected by FastAPI).
-
-    Returns:
-        ProjectStatusResponse with per-document status and overall is_ready flag.
-
-    Raises:
-        HTTP 404: if no project with that ID exists.
-        HTTP 400: if project_id is not a valid UUID.
-    """
+@router_projects.get("/{project_id}/status", response_model=ProjectStatusResponse)
+def get_project_status(project_id: str, db: Session = Depends(get_db)) -> ProjectStatusResponse:
     try:
         proj_uuid = uuid.UUID(project_id)
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid project ID format: '{project_id}'. Must be a UUID.",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Invalid project_id: '{project_id}'.")
     project = db.get(Project, proj_uuid)
     if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Project '{project_id}' not found.",
-        )
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
 
     documents = (
         db.query(Document)
@@ -356,7 +156,8 @@ def get_project_status(
             file_size_bytes=doc.file_size_bytes,
             current_status=doc.upload_status,
             status_message=_STATUS_MESSAGES.get(doc.upload_status, "Processing..."),
-            is_ready=doc.upload_status == "embedded",
+            extraction_error=getattr(doc, "extraction_error", None),
+            is_ready=doc.upload_status == "extracted",
             pipeline=_build_pipeline(doc.upload_status),
             created_at=doc.created_at,
         )

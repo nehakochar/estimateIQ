@@ -1,0 +1,231 @@
+Let me explore the project thoroughly before summarizing.
+
+Let me batch-read all the key files in parallel to get a comprehensive picture quickly.
+
+Now let me read the models, key services, routes, and frontend structure in parallel.
+
+I now have a comprehensive picture of the entire project. Here's the full breakdown:
+
+---
+
+## EstimateIQ — Comprehensive Project Overview
+
+### 1. What the Project Does
+
+**EstimateIQ** is an AI-powered enterprise platform for processing RFP (Request for Proposal) documents. The core workflow: upload RFP files (PDF, DOCX, XLSX) → AI automatically parses, chunks, classifies, and extracts all software requirements → requirements are searchable via semantic/vector search. The end goal is automating requirement extraction and cost/effort estimation for enterprise bid teams. The README describes it as "Phase 1" — the foundation is built, with estimation and timeline features as planned extensions.
+
+---
+
+### 2. Tech Stack
+
+**Backend**
+| Layer | Technology |
+|---|---|
+| API Framework | FastAPI 0.115 + Uvicorn |
+| Language | Python 3.12 |
+| ORM | SQLAlchemy 2.0 |
+| Database | PostgreSQL 16 |
+| Task Queue | Celery 5.4 + Redis 7 (broker + result backend) |
+| Doc Parsing | PyMuPDF, pdfplumber, python-docx, openpyxl |
+| Embeddings | `sentence-transformers` — `BAAI/bge-small-en-v1.5` (384-dim) |
+| LLM Providers | Gemini 2.0 Flash (default), Groq llama-3.3-70b, Anthropic Claude Sonnet — switchable via `EXTRACTION_PROVIDER` env var |
+| Vector DB | Qdrant (in docker-compose but currently commented out — embeddings stored in PostgreSQL `semantic_chunks.embedding_vector`) |
+| Settings | pydantic-settings |
+
+**Frontend**
+| Layer | Technology |
+|---|---|
+| Framework | React 19 + TypeScript |
+| Build Tool | Vite 5 |
+| Styling | Tailwind CSS 3 + Radix UI primitives |
+| State Management | Redux Toolkit + RTK Query |
+| Routing | React Router 6 |
+| HTTP Client | Axios |
+| Forms | React Hook Form + Zod |
+| Icons | Lucide React |
+
+**Infrastructure**
+- Docker Compose with 4 services: `postgres`, `redis`, `backend` (FastAPI), `celery_worker`
+- Frontend runs outside Docker currently (Vite dev server on port 7000, commented out in compose)
+- nginx config present for production frontend build
+
+---
+
+### 3. Main Features / Modules
+
+**Backend**
+- **Upload** (`POST /upload`) — accepts 1–10 files per batch (PDF/DOCX/XLSX), validates size, stores to disk under UUID project dirs, creates DB records
+- **Projects** — full CRUD for projects; each project groups multiple documents; re-extraction endpoint (`POST /projects/{id}/reextract`)
+- **Document Processing** — async Celery pipeline parses files to text, triggers downstream tasks
+- **LLM Requirement Extraction** — single-call LLM extraction from full document text, produces structured requirements with IDs (FR-01, NFR-02, etc.), types, priority, confidence score, page numbers
+- **Chunking** — hierarchical document chunking with heading detection and hierarchy building
+- **Semantic Chunking + Classification** — semantic splitting + rule-based classification of chunks into categories (functional, security, integration, etc.)
+- **Vector Embeddings** — BAAI/bge-small-en-v1.5 embeddings for each semantic chunk; stored in PostgreSQL (Qdrant integration prepared but currently disabled)
+- **Retrieval / Semantic Search** (`POST /search`) — semantic search, category-based search, similar-chunk lookup, project statistics
+- **Jobs** (`GET /jobs`) — Celery job status tracking
+
+**Frontend**
+- **Discovery Page** — portfolio view listing all projects with KPI cards, create project modal
+- **Workspace** — per-project workspace with 5 panels:
+  - **Upload Panel** — drag-and-drop RFP upload with real-time pipeline progress (polls every 2s, shows stage pills: parsing → chunking → classifying → embedding)
+  - **Requirements Panel** — tabbed view of extracted requirements by type (Functional, Non-Functional, Technical, Security, Integration, Compliance, Infrastructure, Support)
+  - **Documents Panel** — document list with status
+  - **Estimate Panel** — scaffolded (placeholder)
+  - **Timeline Panel** — scaffolded (placeholder)
+
+---
+
+### 4. Data Flow
+
+```
+User drops files in browser
+        ↓
+POST /upload → UploadService
+  → validates files, saves to disk (storage/uploads/<project_uuid>/<uuid>_filename)
+  → creates: Project, Document, ProcessingJob rows in PostgreSQL
+  → dispatches: process_document.delay(job_id, document_id) to Celery via Redis
+        ↓
+Celery Worker: process_document task
+  → ProcessingService: loads document, runs parser factory (PDF/DOCX/XLSX)
+  → saves parsed_content (JSON page array) to Document row
+  → marks status: uploaded → processing → parsed
+  → dispatches: extract_requirements_task.delay(document_id, project_id)
+        ↓
+Celery Worker: extract_requirements_task
+  → ExtractionService: reads raw file from disk
+  → extracts full text (pdfplumber for PDFs, handles tables + prose separately)
+  → sends full text to LLM in a single call with structured system prompt
+  → parses JSON response, deduplicates by Jaccard similarity (>85% threshold)
+  → saves rows to extracted_requirements table (FR-01, NFR-02, etc.)
+        ↓
+[Parallel RAG pipeline — see RAG_PIPELINE_FLOW.md]
+  → chunk_document → ChunkingService (hierarchical)
+  → semantic_chunk_document → SemanticChunkingService + classification
+  → embed_document → EmbeddingPipeline (BAAI/bge-small-en-v1.5 → 384-dim vectors)
+  → vectors stored in semantic_chunks table (Qdrant storage also prepared)
+        ↓
+Frontend polls GET /projects/{id}/status every 2s
+  → shows real-time stage progress to user
+        ↓
+User navigates to Requirements panel
+  → GET /projects/{id}/requirements → displays structured requirements
+  → GET /search → semantic search over embedded chunks
+```
+
+---
+
+### 5. AI/ML Components
+
+There are three distinct AI layers:
+
+**LLM Extraction (primary)**
+- Single-pass full-document extraction using Gemini 2.0 Flash (free default), Groq llama-3.3-70b, or Anthropic Claude Sonnet
+- System prompt engineered to return a strict JSON schema with typed requirements
+- Post-processing: JSON cleanup, Jaccard deduplication, auto-ID assignment (FR-01, NFR-02...)
+- Provider is hot-swappable via `EXTRACTION_PROVIDER` env var — no code changes needed
+
+**Semantic Embeddings (RAG core)**
+- Model: `BAAI/bge-small-en-v1.5` via `sentence-transformers` — 384-dimensional normalized dense vectors
+- Model loaded once at worker startup (singleton), reused across calls
+- Vectors stored in PostgreSQL `semantic_chunks.embedding_vector`; Qdrant support also scaffolded
+
+**Classification (rule-based)**
+- Chunk classifier using `classification/rules.py` and `classification/classifier.py`
+- Categorizes chunks into 12 categories: functional, non_functional, ui_ux, integrations, security_compliance, data_validation, workflow_roles, infrastructure_deployment, risks_assumptions_dependencies, open_questions, out_of_scope, other
+
+---
+
+### 6. Infrastructure / Deployment
+
+**Docker Compose (4 active services)**
+```
+postgres:16-alpine    → port 5432  (persistent volume: postgres_data)
+redis:7-alpine        → port 6379  (persistent volume: redis_data)
+backend (FastAPI)     → port 8000  (bind mount: ./backend:/app for hot reload)
+celery_worker         → no port    (same image as backend, different CMD)
+```
+
+- Qdrant service is defined in compose but **commented out** — the vector DB integration exists in code but is disabled at runtime
+- Frontend Docker service is also **commented out** — runs locally via `npm run dev` on port 7000
+- Backend/worker use bind mounts for live code reload during development
+- Health checks on postgres and redis; backend/worker wait for both to be healthy before starting
+- All services on a private `estimateiq_network` bridge
+- Production path: frontend has a Dockerfile + nginx.conf for serving the Vite build as a static site
+
+**Ports**
+| Service | Port |
+|---|---|
+| FastAPI | 8000 |
+| Frontend (dev) | 7000 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+| Swagger UI | http://localhost:8000/docs |
+
+**Storage**
+- Uploaded files: `./backend/storage/uploads/<project_uuid>/<uuid>_originalname`
+- No S3/blob storage yet — local filesystem only
+- `storage/` at project root has a `.gitkeep`
+
+The project is clearly in active development — the LLM extraction pipeline is fully functional, the RAG/embedding pipeline is implemented but the vector store (Qdrant) is disabled, and the Estimate + Timeline frontend panels are scaffolded but not yet wired up.
+
+Now let me read a few more files to round out the picture — especially the frontend panels for Estimate and Timeline to understand what's planned.
+
+Now I have a complete picture. Here's a clear, concise project summary you can hand to any AI tool:
+
+---
+
+## EstimateIQ — Project Summary
+
+**What it is:**
+EstimateIQ is an AI-powered RFP (Request for Proposal) analysis platform. The core problem it solves: companies receive large, dense RFP documents (PDFs, Word docs, Excel files) and need to manually read through them to extract software requirements before they can estimate work effort. EstimateIQ automates that extraction using LLMs.
+
+---
+
+**The User Flow:**
+1. User creates a project, then uploads one or more RFP documents
+2. The system parses the files and sends the full text to an LLM
+3. The LLM returns a structured list of software requirements categorized as: Functional, Non-Functional, Technical, Security, Integration, Compliance, Infrastructure, or Support — each with a priority, confidence score, section reference, and page number
+4. The user reviews the extracted requirements in a filterable, searchable table
+5. The user then manually estimates frontend/backend hours per requirement feature in the Estimate panel
+6. A Gantt-style Timeline panel maps milestones visually
+
+---
+
+**Current State (what's working):**
+- Full upload pipeline with drag-and-drop, validation, real-time progress polling
+- Document parsing (PDF via pdfplumber, DOCX, XLSX)
+- LLM-based requirement extraction — supports Gemini 2.0 Flash (default/free), Groq llama-3.3-70b, or Anthropic Claude, switchable via env var
+- Parallel RAG pipeline: hierarchical chunking → semantic chunking → classification → vector embeddings (BAAI/bge-small-en-v1.5, 384-dim)
+- Semantic search endpoint over embedded chunks
+- Requirements panel with category tabs, text filter, expandable rows
+- Project CRUD and multi-document per project
+
+**What's scaffolded but not yet connected to live data:**
+- Estimate panel (UI is built, reads from static mock data, not from extracted requirements)
+- Timeline panel (UI is built, reads from static mock data)
+
+---
+
+**Tech Stack:**
+| Layer | Technologies |
+|---|---|
+| Frontend | React 19, TypeScript, Vite 5, Redux Toolkit + RTK Query, React Router 6, Tailwind + Radix UI |
+| Backend | FastAPI (Python 3.12), SQLAlchemy 2.0, PostgreSQL 16 |
+| Background jobs | Celery 5 + Redis 7 |
+| AI/LLM | Gemini 2.0 Flash / Groq llama-3.3-70b / Claude (configurable) |
+| Embeddings | sentence-transformers (BAAI/bge-small-en-v1.5) |
+| Vector DB | Qdrant (prepared, currently disabled) |
+| Infrastructure | Docker Compose (4 services: postgres, redis, backend, celery worker) |
+
+---
+
+**The Next Logical Steps (Phase 2):**
+1. Wire the Estimate panel to use live extracted requirements instead of mock data — let the user assign effort hours to each AI-extracted requirement
+2. Wire the Timeline panel to generate milestones from those estimates
+3. Add a cost output — total hours × hourly rate = project cost
+4. Re-enable Qdrant and use semantic search to power requirement lookups and smart grouping
+5. Export functionality (PDF/Excel) for the final estimate
+
+---
+
+This is essentially a **document intelligence → project estimation** pipeline. Upload an RFP, get a structured breakdown of what needs to be built, estimate the effort, and deliver a cost/timeline report.

@@ -44,10 +44,18 @@ class Document(Base):
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # ── Status ────────────────────────────────────────────────────
-    # Lifecycle: uploaded → processing → parsed
+    # Lifecycle: uploaded → processing → parsed → extracted
     #                                  → failed
+    #                                  → extraction_failed
     upload_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="uploaded"
+        String(30), nullable=False, default="uploaded"
+    )
+
+    # ── Extraction error ──────────────────────────────────────────
+    # Set when LLM extraction fails (upload_status = "extraction_failed").
+    # NULL on success or before extraction runs.
+    extraction_error: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
     )
 
     # ── Parsed content (Phase 3) ──────────────────────────────────

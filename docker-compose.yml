@@ -37,25 +37,25 @@ services:
     networks:
       - estimateiq_network
 
-  # 3. Vector Database for AI/Embeddings
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: estimateiq_qdrant
-    restart: always
-    environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
-    ports:
-      - "${QDRANT_PORT_HTTP}:6333"
-      - "${QDRANT_PORT_GRPC}:6334"
-    volumes:
-      - qdrant_storage:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - estimateiq_network
+  # # 3. Vector Database for AI/Embeddings
+  # qdrant:
+  #   image: qdrant/qdrant:latest
+  #   container_name: estimateiq_qdrant
+  #   restart: always
+  #   environment:
+  #     QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+  #   ports:
+  #     - "${QDRANT_PORT_HTTP}:6333"
+  #     - "${QDRANT_PORT_GRPC}:6334"
+  #   volumes:
+  #     - qdrant_storage:/qdrant/storage
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - estimateiq_network
 
   # 4. Application Backend
   backend:
@@ -72,8 +72,6 @@ services:
       - ./backend:/app
     depends_on:
       postgres:
-        condition: service_healthy
-      qdrant:
         condition: service_healthy
       redis:
         condition: service_healthy

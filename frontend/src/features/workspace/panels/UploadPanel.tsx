@@ -3,7 +3,6 @@ import { useParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { uploadDocuments, resetUpload, markToastShown } from "@/store/slices/uploadSlice";
 import { useGetProjectStatusQuery } from "@/services/documentsApi";
-import { useListProjectsQuery } from "@/services/projectsApi";
 import { useToast } from "@/components/ui/use-toast";
 import type { DocumentStatusResponse } from "@/types";
 
@@ -15,11 +14,6 @@ export function UploadPanel() {
   const { isUploading, isSuccess, uploadError, currentProjectId, toastShown } = useAppSelector((s) => s.upload);
   const { toast } = useToast();
 
-  // Get the workspace project name to use as the upload batch name
-  const { data: projectsData } = useListProjectsQuery();
-  const workspaceProject = projectsData?.projects.find((p) => p.id === workspaceProjectId);
-  const workspaceProjectName = workspaceProject?.name ?? "";
-
   const [localFiles, setLocalFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
@@ -29,12 +23,12 @@ export function UploadPanel() {
     dispatch(resetUpload());
   }, [dispatch]);
 
-  // Show success toast when project is created
+  // Show success toast when files are uploaded
   useEffect(() => {
     if (isSuccess && currentProjectId && !toastShown) {
       dispatch(markToastShown());
       toast({
-        title: "Project created successfully",
+        title: "Documents uploaded successfully",
         description: "Your documents are now being processed.",
         variant: "default",
       });
@@ -77,8 +71,8 @@ export function UploadPanel() {
   };
 
   const handleUpload = () => {
-    if (!localFiles.length || isUploading) return;
-    dispatch(uploadDocuments({ projectName: "RFP Upload", files: localFiles }));
+    if (!localFiles.length || isUploading || !workspaceProjectId) return;
+    dispatch(uploadDocuments({ files: localFiles, projectId: workspaceProjectId }));
   };
 
   const handleReset = () => {
@@ -176,9 +170,20 @@ interface PipelineViewProps {
 }
 
 function PipelineView({ projectId, onReset }: PipelineViewProps) {
+  const [pollInterval, setPollInterval] = useState<number | undefined>(2000);
   const { data, isLoading, error } = useGetProjectStatusQuery(projectId, {
-    pollingInterval: 2000,
+    pollingInterval: pollInterval,
   });
+
+  const hasLlmError = data?.documents.some(d => d.current_status === "extraction_failed") ?? false;
+
+  useEffect(() => {
+    if (hasLlmError) {
+      setPollInterval(undefined);
+    } else {
+      setPollInterval(2000);
+    }
+  }, [hasLlmError]);
 
   if (isLoading) {
     return (
@@ -275,14 +280,16 @@ const STAGE_PROGRESS: Record<string, number> = {
 };
 
 const RUNNING_LABELS: Record<string, string> = {
-  uploaded:   "Queuing for processing…",
-  processing: "Parsing document — extracting text…",
-  parsed:     "Chunking document into sections…",
-  chunked:    "Classifying requirements…",
-  classified: "Running NLP pipeline — detecting requirement patterns…",
-  embedding:  "Generating AI search vectors…",
-  embedded:   "Document ready ✓",
-  failed:     "Processing failed",
+  uploaded:          "Queuing for processing…",
+  processing:        "Parsing document — extracting text…",
+  parsed:            "Sending to AI for requirement extraction…",
+  chunked:           "Classifying requirements…",
+  classified:        "Running NLP pipeline — detecting requirement patterns…",
+  embedding:         "Generating AI search vectors…",
+  embedded:          "Document ready ✓",
+  extracted:         "Requirements extracted ✓",
+  failed:            "Processing failed",
+  extraction_failed: "AI extraction failed",
 };
 
 function getProgress(doc: DocumentStatusResponse): number {
@@ -298,11 +305,21 @@ function getProgress(doc: DocumentStatusResponse): number {
 function DocCard({ doc }: { doc: DocumentStatusResponse }) {
   const progress = getProgress(doc);
   const isFailed = doc.current_status === "failed";
+  const isExtractionFailed = doc.current_status === "extraction_failed";
+  const isAnyFailed = isFailed || isExtractionFailed;
   const isReady = doc.is_ready;
   const label = RUNNING_LABELS[doc.current_status] ?? "Processing…";
 
-  const borderColor = isFailed ? "rgba(239,68,68,0.3)" : isReady ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.08)";
-  const barColor = isFailed ? "#ef4444" : isReady ? "#22c55e" : "linear-gradient(90deg, #7c3aed, #a78bfa, #7c3aed)";
+  const borderColor = isAnyFailed
+    ? "rgba(239,68,68,0.3)"
+    : isReady
+    ? "rgba(34,197,94,0.2)"
+    : "rgba(255,255,255,0.08)";
+  const barColor = isAnyFailed
+    ? "#ef4444"
+    : isReady
+    ? "#22c55e"
+    : "linear-gradient(90deg, #7c3aed, #a78bfa, #7c3aed)";
 
   return (
     <div style={{
@@ -315,10 +332,10 @@ function DocCard({ doc }: { doc: DocumentStatusResponse }) {
         {/* Icon */}
         <div style={{
           width: "32px", height: "32px", borderRadius: "8px",
-          background: isFailed ? "rgba(239,68,68,0.1)" : isReady ? "rgba(34,197,94,0.1)" : "rgba(124,58,237,0.1)",
+          background: isAnyFailed ? "rgba(239,68,68,0.1)" : isReady ? "rgba(34,197,94,0.1)" : "rgba(124,58,237,0.1)",
           display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
         }}>
-          {isFailed ? "✗" : isReady ? "✓" : "✦"}
+          {isAnyFailed ? "✗" : isReady ? "✓" : "✦"}
         </div>
 
         {/* Label + filename */}
@@ -334,9 +351,9 @@ function DocCard({ doc }: { doc: DocumentStatusResponse }) {
         {/* Percentage */}
         <div style={{
           fontSize: "11px", fontFamily: "monospace", flexShrink: 0,
-          color: isFailed ? "#f87171" : isReady ? "#4ade80" : "rgba(255,255,255,0.4)",
+          color: isAnyFailed ? "#f87171" : isReady ? "#4ade80" : "rgba(255,255,255,0.4)",
         }}>
-          {isFailed ? "Failed" : `${progress}%`}
+          {isAnyFailed ? "Failed" : `${progress}%`}
         </div>
       </div>
 
@@ -350,14 +367,51 @@ function DocCard({ doc }: { doc: DocumentStatusResponse }) {
         }} />
       </div>
 
-      {/* Stage pills */}
-      {!isReady && !isFailed && (
+      {/* Extraction error detail box */}
+      {isExtractionFailed && doc.extraction_error && (
+        <div style={{
+          margin: "10px 14px 12px",
+          padding: "10px 12px",
+          borderRadius: "8px",
+          background: "rgba(239,68,68,0.08)",
+          border: "1px solid rgba(239,68,68,0.25)",
+        }}>
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "#f87171", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            AI Extraction Error
+          </div>
+          <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.65)", lineHeight: "1.6" }}>
+            {doc.extraction_error}
+          </div>
+          <div style={{ marginTop: "8px", fontSize: "11px", color: "rgba(255,255,255,0.35)" }}>
+            Fix: update <code style={{ color: "#f87171", background: "rgba(239,68,68,0.1)", padding: "1px 5px", borderRadius: "3px" }}>EXTRACTION_PROVIDER</code> or <code style={{ color: "#f87171", background: "rgba(239,68,68,0.1)", padding: "1px 5px", borderRadius: "3px" }}>GEMINI_API_KEY</code> in <code style={{ color: "rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.05)", padding: "1px 5px", borderRadius: "3px" }}>.env</code>, then restart the worker and re-upload.
+          </div>
+        </div>
+      )}
+
+      {/* Generic failed box */}
+      {isFailed && (
+        <div style={{
+          margin: "10px 14px 12px",
+          padding: "10px 12px",
+          borderRadius: "8px",
+          background: "rgba(239,68,68,0.08)",
+          border: "1px solid rgba(239,68,68,0.25)",
+          fontSize: "12px",
+          color: "rgba(255,255,255,0.55)",
+          lineHeight: "1.6",
+        }}>
+          {doc.status_message}
+        </div>
+      )}
+
+      {/* Stage pills — only while in progress */}
+      {!isReady && !isAnyFailed && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", padding: "8px 14px" }}>
           {doc.pipeline.map((stage) => {
             const pillColor =
-              stage.status === "completed" ? { bg: "rgba(34,197,94,0.1)", border: "rgba(34,197,94,0.3)", text: "#4ade80" } :
-              stage.status === "in_progress" ? { bg: "rgba(124,58,237,0.15)", border: "rgba(124,58,237,0.4)", text: "#a78bfa" } :
-              { bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.08)", text: "rgba(255,255,255,0.3)" };
+              stage.status === "completed"   ? { bg: "rgba(34,197,94,0.1)",    border: "rgba(34,197,94,0.3)",    text: "#4ade80" } :
+              stage.status === "in_progress" ? { bg: "rgba(124,58,237,0.15)",  border: "rgba(124,58,237,0.4)",   text: "#a78bfa" } :
+                                               { bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.08)", text: "rgba(255,255,255,0.3)" };
             return (
               <span key={stage.name} style={{
                 fontSize: "11px", padding: "2px 8px", borderRadius: "999px",

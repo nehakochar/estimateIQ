@@ -43,7 +43,7 @@ class DocumentStatusResponse(BaseModel):
     current_status: str = Field(
         description=(
             "Current pipeline status: uploaded | processing | parsed | "
-            "chunked | classified | embedding | embedded | failed"
+            "extracted | failed | extraction_failed"
         )
     )
 
@@ -52,9 +52,15 @@ class DocumentStatusResponse(BaseModel):
         description="Human-readable message about the current state — suitable for UI display"
     )
 
+    # If extraction_failed, this holds the reason
+    extraction_error: str | None = Field(
+        default=None,
+        description="Error message when LLM extraction fails (extraction_failed status). None otherwise.",
+    )
+
     # Whether the document is fully ready for search
     is_ready: bool = Field(
-        description="True when status is 'embedded' and document is searchable"
+        description="True when status is 'extracted' and document is ready"
     )
 
     # Ordered list of pipeline stages with their individual status
