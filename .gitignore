@@ -2,4 +2,30 @@ backend/venv/
 __pycache__/
 .pytest_cache/
 .env
+storage/
+.kiro/
+node_modules/
+# Test and development files
+scripts/test_pipeline.py
+sample_rfp.*
 
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+backend/logs/
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/

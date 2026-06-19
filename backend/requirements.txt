@@ -1,38 +1,45 @@
-# ─────────────────────────────────────────────────────────────────
-# requirements.txt — Python Dependencies
-# ─────────────────────────────────────────────────────────────────
-# All versions are pinned (==) to ensure reproducible builds.
-# "Pinned" means every developer and every Docker build gets the
-# exact same versions — no surprise breakages from updates.
-#
-# To upgrade a package:
-#   1. Change the version number here
-#   2. Rebuild the Docker image: docker-compose build backend
-# ─────────────────────────────────────────────────────────────────
-
-# ── API Framework ────────────────────────────────────────────────
-# FastAPI: the web framework for building APIs
-# uvicorn: the ASGI server that runs FastAPI (like gunicorn for Flask)
-# [standard] includes extras: websockets, httptools for better performance
+# ── API Framework ─────────────────────────────────────────────────
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
+python-multipart==0.0.20
 
-# ── Settings & Environment Variables ─────────────────────────────
-# pydantic-settings: reads .env files into typed Python settings classes
+# ── Settings ──────────────────────────────────────────────────────
 pydantic-settings==2.9.1
 
-# ── Database ─────────────────────────────────────────────────────
-# sqlalchemy: the ORM — maps Python classes to database tables
-# psycopg2-binary: the PostgreSQL driver (binary = no C compiler needed)
+# ── Database ──────────────────────────────────────────────────────
 sqlalchemy==2.0.41
 psycopg2-binary==2.9.10
 
-# ── Vector Database ───────────────────────────────────────────────
-# qdrant-client: official Python client for Qdrant vector database
-qdrant-client==1.14.2
-
-# ── Task Queue & Message Broker ───────────────────────────────────
-# celery: distributed task queue (runs background jobs asynchronously)
-# redis: Python client for Redis (used as Celery's broker and result backend)
+# ── Task Queue ────────────────────────────────────────────────────
 celery[redis]==5.4.0
 redis==5.2.1
+
+# ── Document Parsing ──────────────────────────────────────────────
+# pdfplumber: table-aware PDF extraction for the LLM extraction pipeline
+pdfplumber==0.11.4
+
+# PyMuPDF: used by existing parsers/pdf_parser.py (kept for parsing step)
+PyMuPDF==1.25.5
+
+# python-docx: Word document parsing
+python-docx==1.1.2
+
+# openpyxl: Excel parsing
+openpyxl==3.1.5
+
+# ── LLM Providers (pick one, set EXTRACTION_PROVIDER in .env) ────
+# Gemini — new unified Google GenAI SDK (replaces deprecated google-generativeai 0.8.x)
+# Supports gemini-2.5-flash, gemini-2.0-flash, etc.
+# Get key: aistudio.google.com
+google-genai==1.16.0
+
+# Legacy fallback (kept in case google-genai import fails)
+# google-generativeai==0.8.3
+
+# Groq llama-3.3-70b — FREE, 14400 req/day, 128K context
+# Get key: console.groq.com
+groq==0.11.0
+
+# httpx: google-genai requires >=0.28.1; groq 0.11.0 is compatible with 0.28.x+
+# Do NOT pin to 0.27.2 — google-genai will conflict. Let pip resolve it.
+httpx>=0.28.1,<1.0.0

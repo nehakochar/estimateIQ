@@ -5,6 +5,7 @@
 # They are separate from SQLAlchemy models on purpose:
 #   - Models = what's stored in the database
 #   - Schemas = what the API accepts and returns
-#
-# Example (future):
-#   from app.schemas.rfp import RFPCreate, RFPResponse
+
+from app.schemas.upload import FileResult, UploadResponse
+
+__all__ = ["FileResult", "UploadResponse"]
