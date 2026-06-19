@@ -28,13 +28,18 @@ python-docx==1.1.2
 openpyxl==3.1.5
 
 # ── LLM Providers (pick one, set EXTRACTION_PROVIDER in .env) ────
-# Gemini 2.0 Flash — FREE, 1500 req/day, 1M token context (RECOMMENDED)
+# Gemini — new unified Google GenAI SDK (replaces deprecated google-generativeai 0.8.x)
+# Supports gemini-2.5-flash, gemini-2.0-flash, etc.
 # Get key: aistudio.google.com
-google-generativeai==0.8.3
+google-genai==1.16.0
+
+# Legacy fallback (kept in case google-genai import fails)
+# google-generativeai==0.8.3
 
 # Groq llama-3.3-70b — FREE, 14400 req/day, 128K context
 # Get key: console.groq.com
 groq==0.11.0
 
-# Pin httpx to 0.27.2 to avoid "Client.__init__() got an unexpected keyword argument 'proxies'" error in SDK clients
-httpx==0.27.2
+# httpx: google-genai requires >=0.28.1; groq 0.11.0 is compatible with 0.28.x+
+# Do NOT pin to 0.27.2 — google-genai will conflict. Let pip resolve it.
+httpx>=0.28.1,<1.0.0

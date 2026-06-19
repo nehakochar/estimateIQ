@@ -28,6 +28,14 @@ from app.models.extracted_requirement import ExtractedRequirement
 
 logger = logging.getLogger(__name__)
 
+
+class RetryableExtractionError(Exception):
+    """
+    Raised for transient LLM errors (503 overloaded, 429 rate-limit, timeout).
+    The Celery task catches this and schedules a retry instead of giving up.
+    """
+    pass
+
 _TYPE_PREFIX: dict[str, str] = {
     "Functional":      "FR",
     "Non-Functional":  "NFR",
@@ -134,18 +142,55 @@ def _extract_text(path: Path, file_type: str) -> str:
 
 # ── LLM calls ─────────────────────────────────────────────────────────────────
 
+# Models tried in order. If the first is overloaded (503) the next is used.
+# gemini-2.0-flash was discontinued June 1 2026 — replaced by gemini-2.5-flash-lite.
+_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+
+
 def _call_gemini(text: str) -> str:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
+    from google.genai import errors as genai_errors
+
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY not set in .env")
-    genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=_SYSTEM_PROMPT,
-    )
-    return model.generate_content(
-        f"Extract all requirements from this RFP:\n\n{text}"
-    ).text
+
+    # Gemini 1M-token limit ≈ 3M chars; truncate defensively to avoid OOM/timeout
+    MAX_CHARS = 2_800_000
+    if len(text) > MAX_CHARS:
+        logger.warning("ExtractionService: truncating to %d chars for Gemini 1M limit", MAX_CHARS)
+        text = text[:MAX_CHARS]
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+    last_exc: Exception | None = None
+
+    for model_name in _GEMINI_MODELS:
+        try:
+            logger.info("ExtractionService: calling Gemini model=%s", model_name)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=f"Extract all requirements from this RFP:\n\n{text}",
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                    temperature=0.1,
+                ),
+            )
+            return response.text
+        except genai_errors.ServerError as exc:
+            # 503 = overloaded, try next model
+            logger.warning(
+                "ExtractionService: model=%s returned %s — trying next model",
+                model_name, exc,
+            )
+            last_exc = exc
+        except genai_errors.ClientError as exc:
+            # 429 = rate limit — retryable but no point trying next model
+            logger.warning("ExtractionService: rate-limited on model=%s: %s", model_name, exc)
+            last_exc = exc
+            break  # don't try other models, let Celery retry after backoff
+
+    # All models failed — raise RetryableExtractionError so Celery retries
+    raise RetryableExtractionError(f"All Gemini models unavailable: {last_exc}") from last_exc
 
 
 def _call_groq(text: str) -> str:
@@ -281,9 +326,23 @@ class ExtractionService:
         # 5. Single LLM call
         try:
             raw = _call_llm(full_text)
+        except RetryableExtractionError:
+            # Transient error (503 overloaded, 429 rate-limit, timeout).
+            # Re-raise so the Celery task can schedule a retry.
+            # Do NOT mark extraction_failed — it might succeed on the next attempt.
+            logger.warning(
+                "ExtractionService: transient LLM error for document=%s — will retry",
+                document_id,
+            )
+            raise
         except Exception as exc:
             error_msg = str(exc)
-            logger.error("ExtractionService: LLM call failed: %s", error_msg)
+            # Permanent error (bad API key, unsupported model, etc.) — log full
+            # traceback and mark the document so the UI shows an error.
+            logger.exception(
+                "ExtractionService: permanent LLM failure for document=%s provider=%s — %s",
+                document_id, settings.extraction_provider, error_msg,
+            )
             self._mark_extraction_failed(document, error_msg)
             return
 

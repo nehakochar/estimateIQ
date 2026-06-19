@@ -85,7 +85,10 @@ services:
       dockerfile: Dockerfile
     container_name: estimateiq_celery_worker
     restart: always
-    command: celery -A app.core.celery_app worker --loglevel=info
+    # --concurrency=2  → prevent OOM; LLM calls are I/O-bound, not CPU-bound
+    # --time-limit=360 → hard kill any task hanging > 6 min (e.g. API timeout)
+    # --soft-time-limit=300 → raises SoftTimeLimitExceeded at 5 min so we can log cleanly
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2 --time-limit=360 --soft-time-limit=300
     env_file:
       - .env
     volumes:

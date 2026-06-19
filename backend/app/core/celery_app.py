@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.signals import worker_process_init
 from app.core.config import settings
 
 celery_app = Celery(
@@ -21,3 +22,11 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
 )
+
+
+@worker_process_init.connect
+def init_worker_logging(**kwargs):
+    """Set up file logging in every forked Celery worker process."""
+    from app.core.logging_config import setup_logging
+    setup_logging()
+

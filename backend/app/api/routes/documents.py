@@ -165,7 +165,10 @@ def get_project_status(project_id: str, db: Session = Depends(get_db)) -> Projec
     ]
 
     ready_count = sum(1 for d in doc_statuses if d.is_ready)
-    failed_count = sum(1 for d in doc_statuses if d.current_status == "failed")
+    failed_count = sum(
+        1 for d in doc_statuses
+        if d.current_status in ("failed", "extraction_failed")
+    )
 
     return ProjectStatusResponse(
         project_id=proj_uuid,

@@ -11,10 +11,12 @@ from app.api.routes.projects import router as projects_router
 from app.api.routes.requirements import router as requirements_router
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.logging_config import setup_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()  # initialise file-based logging before anything else
     import app.models  # noqa: F401 — registers all models with Base.metadata
     Base.metadata.create_all(bind=engine, checkfirst=True)
     yield
