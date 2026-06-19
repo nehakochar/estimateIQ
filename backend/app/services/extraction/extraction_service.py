@@ -72,6 +72,7 @@ Return [] if no requirements are found.
 # ── Text extraction ───────────────────────────────────────────────────────────
 
 def _read_pdf(path: Path) -> str:
+    # pyrefly: ignore [missing-import]
     import pdfplumber
     pages: list[str] = []
     with pdfplumber.open(path) as pdf:
@@ -107,6 +108,7 @@ def _read_pdf(path: Path) -> str:
 
 
 def _read_docx(path: Path) -> str:
+    # pyrefly: ignore [missing-import]
     from docx import Document as DocxDoc
     doc = DocxDoc(path)
     return "\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip())
@@ -149,7 +151,9 @@ _GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 def _call_gemini(text: str) -> str:
     from google import genai
+    # pyrefly: ignore [missing-import]
     from google.genai import types as genai_types
+    # pyrefly: ignore [missing-import]
     from google.genai import errors as genai_errors
 
     if not settings.gemini_api_key:
@@ -194,6 +198,7 @@ def _call_gemini(text: str) -> str:
 
 
 def _call_groq(text: str) -> str:
+    # pyrefly: ignore [missing-import]
     from groq import Groq
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY not set in .env")
@@ -290,12 +295,14 @@ class ExtractionService:
             doc_uuid = uuid.UUID(document_id)
             proj_uuid = uuid.UUID(project_id)
         except ValueError:
+            # Can't load the document without a valid UUID — nothing to mark
             logger.error("ExtractionService: invalid UUIDs %s / %s", document_id, project_id)
             return
 
         # 2. Load document row
         document = self.db.get(Document, doc_uuid)
         if not document:
+            # Document row missing — nothing to mark
             logger.error("ExtractionService: document %s not found", document_id)
             return
 
@@ -303,6 +310,7 @@ class ExtractionService:
         file_path = Path(settings.upload_storage_root) / document.stored_path
         if not file_path.exists():
             logger.error("ExtractionService: file not on disk: %s", file_path)
+            self._mark_extraction_failed(document, f"Uploaded file is missing from storage: {file_path.name}. Please re-upload the document.")
             return
 
         logger.info(
@@ -315,10 +323,12 @@ class ExtractionService:
             full_text = _extract_text(file_path, document.file_type)
         except Exception as exc:
             logger.error("ExtractionService: text extraction failed: %s", exc)
+            self._mark_extraction_failed(document, f"Could not read text from document: {exc}")
             return
 
         if not full_text.strip():
             logger.error("ExtractionService: empty text from %s", document_id)
+            self._mark_extraction_failed(document, "The document appears to be empty or contains no extractable text. Ensure the file is not password-protected or image-only.")
             return
 
         logger.info("ExtractionService: %d chars extracted", len(full_text))
@@ -350,6 +360,7 @@ class ExtractionService:
         reqs = _parse_json(raw)
         if not reqs:
             logger.warning("ExtractionService: LLM returned 0 requirements for %s", document_id)
+            self._mark_extraction_failed(document, "The AI could not identify any requirements in this document. The file may not be an RFP, or its content may be structured in a format the AI cannot parse.")
             return
 
         logger.info("ExtractionService: %d requirements from LLM", len(reqs))
@@ -366,6 +377,7 @@ class ExtractionService:
         except Exception as exc:
             self.db.rollback()
             logger.error("ExtractionService: failed to clear old rows: %s", exc)
+            self._mark_extraction_failed(document, f"Database error while clearing previous results: {exc}")
             return
 
         # 9. Build and insert rows
@@ -401,6 +413,20 @@ class ExtractionService:
         except Exception as exc:
             self.db.rollback()
             logger.error("ExtractionService: DB insert failed: %s", exc)
+            self._mark_extraction_failed(document, f"Database error while saving requirements: {exc}")
+            return
+
+        # 10. Mark document as fully extracted
+        try:
+            document.upload_status = "extracted"
+            self.db.commit()
+            logger.info(
+                "ExtractionService: document=%s marked as extracted",
+                document_id,
+            )
+        except Exception as exc:
+            self.db.rollback()
+            logger.error("ExtractionService: failed to mark document as extracted: %s", exc)
 
     def _mark_extraction_failed(self, document: Document, error_msg: str) -> None:
         """Persist extraction_failed status and the error message to the document row."""
