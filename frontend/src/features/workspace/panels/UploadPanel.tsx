@@ -99,7 +99,6 @@ export function UploadPanel() {
           onDragLeave={handleDragLeave}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          onClick={() => document.getElementById("upload-panel-input")?.click()}
           style={{ cursor: "pointer" }}
         >
           <div className="upload-icon">
@@ -131,7 +130,6 @@ export function UploadPanel() {
             accept=".pdf,.docx,.xlsx"
             className="sr-only"
             onChange={handleFileInput}
-            onClick={(e) => e.stopPropagation()}
           />
         </div>
       </label>
