@@ -1,20 +1,13 @@
 """
-requirements.py — API routes for extracted requirements.
+requirements.py — API routes for extracted requirements and estimation.
 
 Endpoints:
     GET  /documents/{document_id}/requirements
-         Returns all extracted requirements for a document.
-         Supports optional ?req_type= and ?priority= filters.
-
     GET  /documents/{document_id}/requirements/summary
-         Returns count breakdown by type and priority (no full text).
-
     GET  /projects/{project_id}/requirements
-         Returns all extracted requirements across all documents in a project.
-         Supports optional ?req_type= filter.
-
     POST /documents/{document_id}/requirements/reextract
-         Triggers a fresh extraction run for a document (re-queues Celery task).
+    POST /projects/{project_id}/estimates/generate
+    GET  /projects/{project_id}/estimates
 """
 
 import uuid
@@ -26,12 +19,16 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.document import Document
 from app.models.extracted_requirement import ExtractedRequirement
+from app.models.requirement_estimate import RequirementEstimate
 from app.schemas.extraction import (
     DocumentRequirementsResponse,
     ExtractedRequirementItem,
     ProjectRequirementsResponse,
     RequirementsSummaryResponse,
 )
+from app.schemas.estimation import ProjectEstimatesResponse
+from app.tasks.estimation_tasks import generate_estimates_task
+
 
 router = APIRouter(tags=["Requirements"])
 
@@ -254,3 +251,127 @@ def reextract_document(
         "status": "extraction_queued",
         "message": "Extraction task queued successfully.",
     }
+
+# ── Estimation Endpoints ─────────────────────────────────────────────────────
+# (imports for estimation are at the top of this file)
+
+@router.post(
+    "/projects/{project_id}/estimates/generate",
+    summary="Generate estimates for all requirements in a project",
+    description="Queues a Celery task to generate sub-feature estimates for each requirement.",
+)
+def generate_project_estimates(project_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        proj_uuid = uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+
+    # Idempotency guard — don't queue a second task if already generating/completed
+    docs = db.query(Document).filter(Document.project_id == proj_uuid).all()
+    if not docs:
+        raise HTTPException(status_code=404, detail="Project not found or has no documents")
+
+    statuses = {d.estimation_status for d in docs}
+    if "generating" in statuses:
+        return {"project_id": project_id, "status": "already_generating"}
+
+    # Collect requirement IDs (only from extracted documents)
+    req_ids = [
+        str(r.id)
+        for r in db.query(ExtractedRequirement.id)
+        .filter(ExtractedRequirement.project_id == proj_uuid)
+        .all()
+    ]
+    if not req_ids:
+        raise HTTPException(status_code=400, detail="No extracted requirements found for this project")
+
+    # Mark all documents as generating before queuing
+    for doc in docs:
+        doc.estimation_status = "generating"
+    db.commit()
+
+    generate_estimates_task.delay(req_ids, project_id)
+    return {"project_id": project_id, "status": "generating"}
+
+
+@router.get(
+    "/projects/{project_id}/estimates",
+    response_model=ProjectEstimatesResponse,
+    summary="Get estimation results for a project",
+)
+def get_project_estimates(project_id: str, db: Session = Depends(get_db)) -> ProjectEstimatesResponse:
+    try:
+        proj_uuid = uuid.UUID(project_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+
+    # Determine status: if ANY document is still generating, report generating.
+    # Fall back to not_started if no documents exist.
+    docs = db.query(Document).filter(Document.project_id == proj_uuid).all()
+    if not docs:
+        estimation_status = "not_started"
+    else:
+        statuses = {d.estimation_status for d in docs}
+        if "generating" in statuses:
+            estimation_status = "generating"
+        elif "failed" in statuses:
+            estimation_status = "failed"
+        elif statuses == {"completed"}:
+            estimation_status = "completed"
+        else:
+            estimation_status = "not_started"
+
+    # Fetch sub-features and group by requirement
+    estimates = db.query(RequirementEstimate).filter(RequirementEstimate.project_id == proj_uuid).all()
+
+    req_map: dict[uuid.UUID, dict] = {}
+    for est in estimates:
+        rid = est.requirement_id
+        if rid not in req_map:
+            req = db.get(ExtractedRequirement, rid)
+            if req is None:
+                continue  # orphaned estimate — skip
+            req_map[rid] = {
+                "requirement_id": rid,
+                "req_id": req.req_id,
+                "name": req.name,
+                "req_type": req.req_type,
+                "description": req.description,
+                "sub_features": [],
+                "subtotal_frontend": 0.0,
+                "subtotal_backend": 0.0,
+                "subtotal_mobile": 0.0,
+                "subtotal_total": 0.0,
+            }
+        group = req_map[rid]
+        sf = {
+            "id": est.id,
+            "sub_feature_name": est.sub_feature_name,
+            "description": est.description,
+            "frontend_hours": est.frontend_hours,
+            "backend_hours": est.backend_hours,
+            "mobile_hours": est.mobile_hours,
+            "complexity": est.complexity,
+            "assumptions": est.assumptions,
+        }
+        group["sub_features"].append(sf)
+        group["subtotal_frontend"] += est.frontend_hours
+        group["subtotal_backend"] += est.backend_hours
+        group["subtotal_mobile"] += est.mobile_hours
+        group["subtotal_total"] += est.frontend_hours + est.backend_hours + est.mobile_hours
+
+    total_fe = sum(g["subtotal_frontend"] for g in req_map.values())
+    total_be = sum(g["subtotal_backend"] for g in req_map.values())
+    total_mob = sum(g["subtotal_mobile"] for g in req_map.values())
+    grand_total = sum(g["subtotal_total"] for g in req_map.values())
+
+    return ProjectEstimatesResponse(
+        project_id=proj_uuid,
+        estimation_status=estimation_status,
+        total_frontend_hours=total_fe,
+        total_backend_hours=total_be,
+        total_mobile_hours=total_mob,
+        grand_total_hours=grand_total,
+        requirements=list(req_map.values()),
+    )
+

@@ -50,6 +50,9 @@ class Document(Base):
     upload_status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="uploaded"
     )
+    estimation_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="not_started"
+    )  # not_started | generating | completed | failed
 
     # ── Extraction error ──────────────────────────────────────────
     # Set when LLM extraction fails (upload_status = "extraction_failed").

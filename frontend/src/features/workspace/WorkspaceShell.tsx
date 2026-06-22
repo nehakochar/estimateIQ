@@ -7,27 +7,27 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 
 // Map URL segment → WorkspacePanel type
 const PANEL_MAP: Record<string, WorkspacePanel> = {
-  upload:       "upload",
+  upload: "upload",
   requirements: "requirements",
-  estimate:     "estimate",
-  timeline:     "timeline",
-  documents:    "documents",
+  estimate: "estimate",
+  timeline: "timeline",
+  documents: "documents",
 };
 
 const PANEL_LABEL: Record<WorkspacePanel, string> = {
-  upload:       "Upload Workspace",
+  upload: "Upload Workspace",
   requirements: "Requirements",
-  estimate:     "Estimate",
-  timeline:     "Timeline",
-  documents:    "Documents",
+  estimate: "Estimate",
+  timeline: "Timeline",
+  documents: "Documents",
 };
 
 export function WorkspaceShell() {
   // The URL param is the project UUID (e.g. /projects/abc-123/upload)
   const { slug: projectId } = useParams<{ slug: string }>();
-  const navigate  = useNavigate();
-  const location  = useLocation();
-  const dispatch  = useAppDispatch();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const dispatch = useAppDispatch();
   const { activePanel } = useAppSelector((s) => s.workspace);
 
   // Fetch all projects and find the one matching the UUID in the URL
@@ -91,7 +91,7 @@ export function WorkspaceShell() {
           </div>
 
           <div className="topbar-right">
-            <span className="ai-tag">Workspace Hub v2.5</span>
+            {/* <span className="ai-tag">Workspace Hub v2.5</span> */}
             <button className="btn btn-ghost" onClick={handleExitToHub}>
               ← Dashboard Hub
             </button>

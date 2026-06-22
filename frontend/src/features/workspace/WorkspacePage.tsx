@@ -9,11 +9,11 @@ import { DocumentsPanel } from "./panels/DocumentsPanel";
 import { portfolioData } from "@/data/portfolio";
 
 const panelLabel: Record<string, string> = {
-  upload:       "Upload Workspace",
+  upload: "Upload Workspace",
   requirements: "Requirements",
-  estimate:     "Estimate",
-  timeline:     "Timeline",
-  documents:    "Documents",
+  estimate: "Estimate",
+  timeline: "Timeline",
+  documents: "Documents",
 };
 
 export function WorkspacePage() {
@@ -46,7 +46,7 @@ export function WorkspacePage() {
           </div>
 
           <div className="topbar-right">
-            <span className="ai-tag">Workspace Hub v2.5</span>
+            {/* <span className="ai-tag">Workspace Hub v2.5</span> */}
             <button className="btn btn-ghost" onClick={() => dispatch(exitToDiscovery())}>
               ← Dashboard Hub
             </button>
@@ -54,11 +54,11 @@ export function WorkspacePage() {
         </div>
 
         <div className="content">
-          {activePanel === "upload"       && <UploadPanel />}
+          {activePanel === "upload" && <UploadPanel />}
           {activePanel === "requirements" && <RequirementsPanel />}
-          {activePanel === "estimate"     && <EstimatePanel />}
-          {activePanel === "timeline"     && <TimelinePanel />}
-          {activePanel === "documents"    && <DocumentsPanel />}
+          {activePanel === "estimate" && <EstimatePanel />}
+          {activePanel === "timeline" && <TimelinePanel />}
+          {activePanel === "documents" && <DocumentsPanel />}
         </div>
       </div>
     </div>

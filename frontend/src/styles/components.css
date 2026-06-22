@@ -227,9 +227,13 @@
 }
 
 /* ── Estimate panel ── */
+.estimate-panel > * {
+  flex-shrink: 0;
+}
+
 .estimate-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 28px;
 }
@@ -346,7 +350,7 @@
 
 .estimate-col-headers {
   display: grid;
-  grid-template-columns: 1fr 160px 160px 90px;
+  grid-template-columns: 1fr 120px 120px 120px 80px;
   gap: 8px;
   padding: 0 4px 10px;
   font-size: 10px;
@@ -360,10 +364,11 @@
 .estimate-col-headers .col-right { text-align: right; }
 .estimate-col-fe { color: var(--accent2); }
 .estimate-col-be { color: var(--sky); }
+.estimate-col-mob { color: var(--accent3); }
 
 .estimate-feature-row {
   display: grid;
-  grid-template-columns: 1fr 160px 160px 90px;
+  grid-template-columns: 1fr 120px 120px 120px 80px;
   gap: 8px;
   padding: 10px 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
@@ -424,6 +429,12 @@
   font-family: 'DM Mono', monospace;
   font-size: 13px;
   color: var(--sky);
+}
+
+.estimate-grand-mob {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: var(--accent3);
 }
 
 .estimate-grand-total {

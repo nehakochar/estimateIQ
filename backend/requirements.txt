@@ -38,7 +38,8 @@ google-genai==1.16.0
 
 # Groq llama-3.3-70b — FREE, 14400 req/day, 128K context
 # Get key: console.groq.com
-groq==0.11.0
+# groq>=0.13.0 required: 0.11.0 passes `proxies` to httpx which was removed in httpx 0.28
+groq>=0.13.0
 
 # httpx: google-genai requires >=0.28.1; groq 0.11.0 is compatible with 0.28.x+
 # Do NOT pin to 0.27.2 — google-genai will conflict. Let pip resolve it.

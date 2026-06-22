@@ -30,7 +30,7 @@ export function DiscoveryPage() {
             <div className="logo-block">
               <div className="logo-icon">
                 <svg viewBox="0 0 24 24">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                 </svg>
               </div>
               <div className="logo-text">
@@ -39,9 +39,9 @@ export function DiscoveryPage() {
               </div>
             </div>
           </div>
-          <div className="topbar-right">
+          {/* <div className="topbar-right">
             <span className="ai-tag">Workspace Hub v2.5</span>
-          </div>
+          </div> */}
         </div>
 
         {/* Scrollable content */}
@@ -56,8 +56,8 @@ export function DiscoveryPage() {
             <div className="hub-actions">
               <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="12" y1="5" x2="12" y2="19"/>
-                  <line x1="5" y1="12" x2="19" y2="12"/>
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
                 Create New Project
               </button>
@@ -121,8 +121,8 @@ export function DiscoveryPage() {
               <p style={{ marginBottom: "1rem" }}>No projects yet. Create your first one to get started.</p>
               <button className="btn btn-primary" onClick={() => setModalOpen(true)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="12" y1="5" x2="12" y2="19"/>
-                  <line x1="5" y1="12" x2="19" y2="12"/>
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
                 Create New Project
               </button>
@@ -142,15 +142,15 @@ export function DiscoveryPage() {
                     <div className="project-card-header">
                       <span className={`badge ${p.status === "active" ? "b-active" : p.status === "pipeline" ? "b-pipeline" : "b-pending"}`}>
                         {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
-                      </span>                     
+                      </span>
                     </div>
                     <div className="project-title">{p.name}</div>
                     <div className="project-desc">
                       {p.client_name ? `Client: ${p.client_name}` : "No client specified."}
                     </div>
                   </div>
-                  <div>              
-                    
+                  <div>
+
                     <div className="project-meta">
                       <span>
                         Created {new Date(p.created_at).toLocaleDateString()}

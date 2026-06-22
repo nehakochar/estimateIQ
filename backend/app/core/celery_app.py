@@ -9,6 +9,7 @@ celery_app = Celery(
     include=[
         "app.tasks.processing_tasks",    # parse document → save parsed_content
         "app.tasks.extraction_tasks",    # LLM extraction → extracted_requirements
+        "app.tasks.estimation_tasks",    # LLM estimation → requirement_estimates
     ],
 )
 
